@@ -1,5 +1,12 @@
 #include "main.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "ble_task.h"
+#include "wifi_task.h"
+#include "app_config_flash.h"
+
 static const char *TAG = "APP_MAIN";
 
 // 핀 정의 (ESP32-S3 하드웨어에 맞게 수정 가능)
@@ -332,7 +339,17 @@ void uart0_to_uart1_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+
 void app_main(void) {
+
+    esp_err_t ret;
+    ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    
+    NVS_Flash_init();
 
     uart_bridge_init();
     xTaskCreate(uart1_to_uart0_task, "u1_to_u0", 3072, NULL, 10, NULL);
@@ -360,6 +377,9 @@ void app_main(void) {
 	sensor_init();
 	loadcell_init();
 #endif
+    ble_task_init();
+	wifi_init();
+
 	Usage();
 
 	while(1)

@@ -1,14 +1,14 @@
 #include "main.h"
 
 #ifdef FEATURE_WIFI_RSSI_TEST
-// ??? 접속할 Wi-Fi AP 정보 입력
+
+static const char *TAG = "WIFI_TEST";
+
+static bool s_is_connected = false;
+
 #define WIFI_SSID      "WAVEON_2.4G"
 #define WIFI_PASSWORD  "1qaz2wsx^^"
 
-static const char *TAG = "WIFI_TEST";
-static bool s_is_connected = false;
-
-// Wi-Fi 이벤트 핸들러
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -24,19 +24,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-// 실시간 RSSI 모니터링 태스크
 void wifi_connected_rssi_task(void *arg) {
     int rssi = 0;
 
     while (1) {
         if (s_is_connected) {
-            // 현재 연결된 AP의 RSSI 값 가져오기
             esp_err_t ret = esp_wifi_sta_get_rssi(&rssi);
             
             if (ret == ESP_OK) {
                 ESP_LOGI(TAG, "current AP: [%s] | RSSI: %d dBm", WIFI_SSID, rssi);
                 
-                // RSSI 세기 기준 가이드 출력
                 if (rssi >= -50) {
                     ESP_LOGI(TAG, "signal status : very good (Excellent)");
                 } else if (rssi >= -70) {
