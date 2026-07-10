@@ -380,6 +380,8 @@ void app_main(void) {
     ble_task_init();
 	wifi_init();
 
+    aws_iot_task_init();
+
 	Usage();
 
 	while(1)

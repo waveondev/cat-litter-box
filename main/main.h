@@ -22,6 +22,16 @@ extern "C" {
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_continuous.h"
+#include <esp_https_ota.h>
+#include <esp_ota_ops.h>
+#include "mqtt_main.h"
+#include "esp_netif_sntp.h"
+#include "esp_sntp.h"  // v5.x 호환용
+#include "esp_vfs_dev.h"
+#include "protocol_examples_common.h"
+#include "lwip/apps/mqtt.h"
+#include "aws_iot_task.h"
+#include "esp_spiffs.h"
 #include "dc_motor_control.h"
 #include "step_motor_control.h"
 #include "led_strip.h"

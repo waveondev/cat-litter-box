@@ -17,13 +17,13 @@ app_config_t app_config =
     .motion_data_time = 1800,
 };
 
-wifi_info_t wifi_info = 
+app_wifi_config_t wifi_config = 
 {
    .conn_ssid = "",
    .conn_password = ""
 };
 
-ble_info_t ble_info = 
+app_ble_config_t ble_config = 
 {
    .ble_device_name = ""
 };
@@ -84,13 +84,13 @@ void dump_all_configurations(void)
     // 2. Wi-Fi 설정 출력
     ESP_LOGI(TAG, "[WIFI CONFIG]");
     // SSID나 PASSWORD가 비어있으면 [EMPTY]로 센스있게 표기
-    ESP_LOGI(TAG, "  - Wi-Fi SSID           : %s", (wifi_info.conn_ssid[0] == '\0') ? "[EMPTY]" : (char*)wifi_info.conn_ssid);
-    ESP_LOGI(TAG, "  - Wi-Fi Password       : %s", (wifi_info.conn_password[0] == '\0') ? "[EMPTY]" : "********"); // 보안상 별표 표기 (원하시면 %s로 생자로 까셔도 됩니다)
+    ESP_LOGI(TAG, "  - Wi-Fi SSID           : %s", (wifi_config.conn_ssid[0] == '\0') ? "[EMPTY]" : (char*)wifi_config.conn_ssid);
+    ESP_LOGI(TAG, "  - Wi-Fi Password       : %s", (wifi_config.conn_password[0] == '\0') ? "[EMPTY]" : "********"); // 보안상 별표 표기 (원하시면 %s로 생자로 까셔도 됩니다)
     ESP_LOGI(TAG, "--------------------------------------------------");
 
     // 3. BLE 설정 출력
     ESP_LOGI(TAG, "[BLE CONFIG]");
-    ESP_LOGI(TAG, "  - BLE Device Name      : %s", (ble_info.ble_device_name[0] == '\0') ? "[EMPTY]" : (char*)ble_info.ble_device_name);
+    ESP_LOGI(TAG, "  - BLE Device Name      : %s", (ble_config.ble_device_name[0] == '\0') ? "[EMPTY]" : (char*)ble_config.ble_device_name);
     
     ESP_LOGI(TAG, "==================================================");
 }
@@ -100,14 +100,14 @@ app_config_t* get_app_config(void)
     return &app_config;
 }
 
-wifi_info_t* get_wifi_config(void)
+app_wifi_config_t* get_wifi_config(void)
 {
-    return &wifi_info;
+    return &wifi_config;
 }
 
-ble_info_t* get_ble_config(void)
+app_ble_config_t* get_ble_config(void)
 {
-    return &ble_info;
+    return &ble_config;
 }
 
 void load_app_configuration(void)
@@ -157,35 +157,35 @@ static void save_app_configuration(void)
 void load_wifi_configuration(void)
 {
     // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_info, sizeof(wifi_info_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
     
     if (err != ESP_OK) {
         // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
         ESP_LOGI(TAG,"[WIFI] no previous saved data, create a new default values.\r\n");
                 
         // 기본값 세팅 후 NVS에 최초로 구워두기
-        write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_info, sizeof(wifi_info_t));
+        write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
     } else {
         ESP_LOGI(TAG,"[WIFI] NVS system load success! (ssid = %s, pass = %s)\r\n", 
-                          wifi_info.conn_ssid, wifi_info.conn_password);
+                          wifi_config.conn_ssid, wifi_config.conn_password);
     }
 }
 
 // 값이 바뀔 때마다 호출해 줄 저장 함수
 static void save_wifi_configuration(void)
 {
-    write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_info, sizeof(wifi_info_t));
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
 // 2. 검증을 위해 NVS에서 데이터를 다시 읽어올 임시 그릇 생성
-    wifi_info_t temp_cfg;
-    memset(&temp_cfg, 0, sizeof(wifi_info_t)); // 0으로 깨끗하게 청소
+    app_wifi_config_t temp_cfg;
+    memset(&temp_cfg, 0, sizeof(app_wifi_config_t)); // 0으로 깨끗하게 청소
 
     // 3. NVS에서 방금 저장한 값을 다시 로드(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &temp_cfg, sizeof(wifi_info_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &temp_cfg, sizeof(app_wifi_config_t));
 
     if (err == ESP_OK) {
-        // 4. memcmp로 원본(wifi_info)과 NVS에서 읽어온 값(temp_cfg)을 비교
+        // 4. memcmp로 원본(wifi_config)과 NVS에서 읽어온 값(temp_cfg)을 비교
         // 두 메모리 블록이 100% 일치하면 0을 리턴합니다.
-        if (memcmp(&wifi_info, &temp_cfg, sizeof(wifi_info_t)) == 0) {
+        if (memcmp(&wifi_config, &temp_cfg, sizeof(app_wifi_config_t)) == 0) {
             ESP_LOGI(TAG, "[WIFI] NVS data verification success! matched 100%% ");
             ESP_LOGI(TAG, "[WIFI] loaded SSID: %s", temp_cfg.conn_ssid);
         } else {
@@ -201,35 +201,35 @@ static void save_wifi_configuration(void)
 void load_ble_configuration(void)
 {
     // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_info, sizeof(ble_info_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
     
     if (err != ESP_OK) {
         // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
         ESP_LOGI(TAG,"[BLE] no saved data, create default values \r\n");
                 
         // 기본값 세팅 후 NVS에 최초로 구워두기
-        write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_info, sizeof(ble_info_t));
+        write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
     } else {
         ESP_LOGI(TAG,"[BLE] NVS system setting loaded success! (ssid = %s, pass = %s)\r\n", 
-                          wifi_info.conn_ssid, wifi_info.conn_password);
+                          wifi_config.conn_ssid, wifi_config.conn_password);
     }
 }
 
 // 값이 바뀔 때마다 호출해 줄 저장 함수
 static void save_ble_configuration(void)
 {
-    write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_info, sizeof(ble_info_t));
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
 // 2. 검증을 위해 NVS에서 방금 저장한 값을 다시 읽어올 임시 그릇 생성
-    ble_info_t temp_cfg;
-    memset(&temp_cfg, 0, sizeof(ble_info_t)); // 깨끗하게 청소
+    app_ble_config_t temp_cfg;
+    memset(&temp_cfg, 0, sizeof(app_ble_config_t)); // 깨끗하게 청소
 
     // 3. NVS에서 데이터를 다시 역으로 로드(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &temp_cfg, sizeof(ble_info_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &temp_cfg, sizeof(app_ble_config_t));
 
     if (err == ESP_OK) {
-        // 4. ?? memcmp로 원본(ble_info)과 읽어온 것(temp_cfg)을 크기만큼 비교
+        // 4. ?? memcmp로 원본(ble_config)과 읽어온 것(temp_cfg)을 크기만큼 비교
         // memcmp는 두 메모리가 완전히 일치하면 '0'을 반환합니다.
-        if (memcmp(&ble_info, &temp_cfg, sizeof(ble_info_t)) == 0) {
+        if (memcmp(&ble_config, &temp_cfg, sizeof(app_ble_config_t)) == 0) {
             ESP_LOGI(TAG, "[BLE] NVS data verification success! matched 100%%");
             ESP_LOGI(TAG, "[BLE] loaded name: %s", temp_cfg.ble_device_name);
         } else {

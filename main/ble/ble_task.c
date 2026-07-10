@@ -117,11 +117,8 @@ static void ble_spp_server_advertise(void)
         NULL
     );
 }
-/*
-void send_motion(void)
-{
-    MotionSetTimer(is_phone_connected);
-} */
+
+extern void MotionSetTimer(bool status);
 /**
  * NimBLE GAP 이벤트 콜백 핸들러 (연결 상태 감시 + [추가] 비콘 스캔 처리)
  */
@@ -141,7 +138,7 @@ static int ble_spp_server_gap_event(struct ble_gap_event *event, void *arg)
         ESP_LOGE(TAG, "BLE_GAP_EVENT_CONNECT");
         
         current_conn_handle = event->connect.conn_handle;
-//        MotionSetTimer(is_phone_connected);
+        MotionSetTimer(is_phone_connected);
         if (event->connect.status == 0) {
 
 
@@ -159,7 +156,7 @@ static int ble_spp_server_gap_event(struct ble_gap_event *event, void *arg)
         MODLOG_DFLT(INFO, "disconnect; reason=%d \n", event->disconnect.reason);
         current_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         is_phone_connected = false;
-//        MotionSetTimer(is_phone_connected);
+        MotionSetTimer(is_phone_connected);
         if (event->disconnect.conn.conn_handle <= CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
             conn_handle_subs[event->disconnect.conn.conn_handle] = false;
         }

@@ -1,14 +1,136 @@
-# put here your custom config value
 menu "Example Configuration"
-config ESP_WIFI_SSID
-    string "WiFi SSID"
-    default "myssid"
-    help
-	SSID (network name) for the example to connect to.
 
-config ESP_WIFI_PASSWORD
-    string "WiFi Password"
-    default "mypassword"
-    help
-	WiFi password (WPA or WPA2) for the example to use.
+    choice EXAMPLE_IP_MODE
+        prompt "IP Version"
+        depends on EXAMPLE_SOCKET_IP_INPUT_STRING
+        help
+            Example can use either IPV4 or IPV6.
+
+        config EXAMPLE_IPV4
+            bool "IPV4"
+
+        config EXAMPLE_IPV6
+            bool "IPV6"
+
+    endchoice
+
+    config EXAMPLE_IPV4_ADDR
+        string "IPV4 Address"
+        default "192.168.0.165"
+        depends on EXAMPLE_IPV4
+        help
+            The example will connect to this IPV4 address.
+
+    config EXAMPLE_IPV6_ADDR
+        string "IPV6 Address"
+        default "FE80::30AD:E57B:C212:68AD"
+        depends on EXAMPLE_IPV6
+        help
+            The example will connect to this IPV6 address.
+
+    config EXAMPLE_PORT
+        int "Port"
+        range 0 65535
+        default 3333
+        help
+            The remote port to which the client example will connect to.
+
+    choice EXAMPLE_INTERFACE
+        prompt "Interface selection"
+        depends on EXAMPLE_IPV6
+        help
+            Example can use either "Auto" or "User specified".
+
+        config EXAMPLE_IFACE_AUTO
+            bool "Auto"
+
+        config EXAMPLE_USER_SPECIFIED_IFACE
+            bool "User specified interface"
+    endchoice
+
+    config EXAMPLE_USER_SPECIFIED_IFACE_NAME
+        string "User specified interface name"
+        default "st1"
+        depends on EXAMPLE_USER_SPECIFIED_IFACE
+        help
+            This interface will be used for communication.
+
+    choice EXAMPLE_SOCKET_IP_INPUT
+        prompt "Socket example source"
+        default EXAMPLE_SOCKET_IP_INPUT_STRING
+        help
+            Selects the input source of the IP used in the example.
+
+        config EXAMPLE_SOCKET_IP_INPUT_STRING
+            bool "From string"
+
+        config EXAMPLE_SOCKET_IP_INPUT_STDIN
+            bool "From stdin"
+    endchoice
+    
+    config MQTT_CLIENT_IDENTIFIER
+        string "The MQTT client identifier used in this example"
+        default "testClient"
+        help
+            The MQTT client identifier used in this example. Each client identifier must be unique.
+            so edit as required to ensure that no two clients connecting to the same broker use the same client identifier.
+
+    config MQTT_BROKER_ENDPOINT
+        string "Endpoint of the MQTT broker to connect to"
+        default "test.mosquitto.org"
+        help
+            This example can be run with any MQTT broker, that supports server authentication.
+
+    config MQTT_BROKER_PORT
+        int "Port of the MQTT broker use"
+        default 8883
+        help
+            In general, port 8883 is for secured MQTT connections.
+            Port 443 requires use of the ALPN TLS extension with the ALPN protocol name.
+            When using port 8883, ALPN is not required.
+
+    config HARDWARE_PLATFORM_NAME
+        string "The hardware platform"
+        default "ESP32"
+        help
+            The name of the hardware platform the application is running on.
+
+    config MQTT_NETWORK_BUFFER_SIZE
+        int "Size of the network buffer for MQTT packets"
+        range 1024 16384
+        default 1024
+        help
+            Size of the network buffer for MQTT packets.
+
+    config PROVISIONING_TEMPLATE_NAME
+        string "Name of the provisioning template"
+        default "FleetProvisioningDemoTemplate"
+        help
+            Name of the provisioning template to use for the RegisterThing
+            portion of the Fleet Provisioning workflow.
+
+    config DEVICE_SERIAL_NUMBER
+        string "The device serial number"
+        default "0000"
+        help
+            This is sent as a parameter to the provisioning template,
+            which uses it to generate a unique Thing name.
+            This should be unique per device.
+
+    choice EXAMPLE_CHOOSE_PKI_ACCESS_METHOD
+        prompt "Choose PKI credentials access method"
+        default EXAMPLE_USE_PLAIN_FLASH_STORAGE
+        help
+            ESP devices support multiple ways to secure store the PKI credentials.
+            Currently Secure Element (ATECC608A) and DS peripheral are supported.
+            The default behaviour is to access the PKI credentials which are embedded in the binary.
+            Consult the ESP-TLS documentation in ESP-IDF Programming guide for more details.
+
+        config EXAMPLE_USE_PLAIN_FLASH_STORAGE
+        bool "Use flash storage (default)"
+        help
+            This option expects the Private key and Device certificate to be embedded in the binary.
+            This is the default behaviour.
+    endchoice
+    
 endmenu
