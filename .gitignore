@@ -8,7 +8,7 @@ latex/
 html/
 
 # 2. ESP-IDF Managed Components (자동으로 다운로드되는 컴포넌트 라이브러리)
-managed_components/
+# managed_components/
 dependencies.lock
 
 # 3. Project Configuration Files (보안 및 로컬 하드웨어 설정)
