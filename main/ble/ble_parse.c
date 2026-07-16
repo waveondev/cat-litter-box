@@ -11,7 +11,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
     buf[len] = '\0';
 
 
-    // scan ����
+    // scan 명령
     if(strcmp(buf, "scan") == 0)
     {
         wifi_scan_start();
@@ -46,7 +46,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
     {
         if(ssid == NULL || pass == NULL)
         {
-            printf("CONNECT_AP not enough parameters!\n");
+            printf("CONNECT_AP 파라미터 부족\n");
             return;
         }
 
@@ -55,6 +55,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
 
 
         app_wifi_config_t* wifi_config = get_wifi_config();
+
 
         memset(wifi_config->conn_ssid, 0,
             sizeof(wifi_config->conn_ssid));
@@ -73,7 +74,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
 
         wifi_nvs_save_set();
         Wifi_Connect(ssid,pass);
-        printf("saved OK!\n");
+        printf("저장 완료\n");
     }
 }
 static uint32_t total_count = 0;
@@ -82,7 +83,7 @@ void BLE_Receive_data(uint8_t* data, uint16_t len)
 {
     Motion_Packet_t* Motion_Packet = (Motion_Packet_t*)data;
     
-    printf("[BLE_Receive_data] %d byes processing : ", len);
+    printf("[BLE_Receive_data] %d 바이트 데이터 처리 중: ", len);
 
     for(int i = 0; i < len; i++)
     {

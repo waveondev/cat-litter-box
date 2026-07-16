@@ -8,9 +8,10 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "ble_task.h"
-/* NimBLE ÇÊ¼ö Çì´õ */
+/* NimBLE í•„ìˆ˜ í—¤ë” */
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "console/console.h"
+
