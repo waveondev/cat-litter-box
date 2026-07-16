@@ -62,7 +62,7 @@ void Wifi_Connect(const char* target_ssid, const char* target_password)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi 설정 적용 실패!");
         ble_send_data_to_queue((uint8_t*)"CONNECT_AP FAIL", strlen("CONNECT_AP FAIL"));
-        led_bit_disable(PAIRING_BIT);
+//        led_bit_disable(PAIRING_BIT);
         return;
     }
 
@@ -95,7 +95,7 @@ void Wifi_Connect(const char* target_ssid, const char* target_password)
         esp_wifi_disconnect(); // 타임아웃 났으니 연결 시도 중단
     }
 
-    led_bit_disable(PAIRING_BIT);
+//    led_bit_disable(PAIRING_BIT);
 }
 /*
 void wifi_init_sta_static_ip(char* WIFI_SSID, char* WIFI_PASS)
@@ -325,7 +325,7 @@ uint16_t wifi_scan_start(void)
             );
     }
     ESP_LOGI(TAG, "최종 스캔 종료: 총 %d 개의 AP 확정", total_found_count);
-    led_bit_disable(PAIRING_BIT);
+//    led_bit_disable(PAIRING_BIT);
     return total_found_count;
 }
 #endif
