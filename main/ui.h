@@ -21,8 +21,6 @@ typedef enum {
 void send_ui_cmd_msg(void *message, uint32_t cmd);
 
 void ui_init(void);
-int scp_spin_cal(void *arg);
-
 
 #ifdef __cplusplus
 }

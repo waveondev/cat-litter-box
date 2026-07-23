@@ -4,7 +4,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+#include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,16 +23,6 @@ extern "C" {
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_continuous.h"
-#include <esp_https_ota.h>
-#include <esp_ota_ops.h>
-#include "mqtt_main.h"
-#include "esp_netif_sntp.h"
-#include "esp_sntp.h"  // v5.x 호환용
-#include "esp_vfs_dev.h"
-#include "protocol_examples_common.h"
-#include "lwip/apps/mqtt.h"
-#include "aws_iot_task.h"
-#include "esp_spiffs.h"
 #include "dc_motor_control.h"
 #include "step_motor_control.h"
 #include "led_strip.h"
@@ -52,13 +43,8 @@ extern "C" {
 #include "iot_button.h"
 #include "loadcell.h"
 #include "motor.h"
-
+#include "current_monitor.h"
 #include "app_config_flash.h"
-#include "wifi_task.h"
-#include "http_ota.h"
-#include "ble_task.h"
-#include "ble_parse.h"
-#include "ble_tracker_id.h"
 
 #define FW_PRJ_NAME						"[C-100]CAT Litter Box"
 #define FW_VER_MAJOR					0
@@ -76,13 +62,25 @@ extern "C" {
 
 
 //#define FEATURE_WIFI_RSSI_TEST
-//#define ENABLE_SENSOR_INPUT
+#define FEATURE_SENSOR_INPUT
+//#define FEATURE_INITIAL_CAL
+
 ///////////////////////////////////////////////////////////
 // demo synario, should select one item
 //#define FEATURE_LED_TEST
+//#define FEATURE_MOTOR_CAL_TEST
+#define FEATURE_CLEAN_TEST
+//#define FEATURE_PT_TEST
+//#define FEATURE_MAIN_COVER_DC_MOTOR
 
-#define SCP_INPUT_WAIT		(10000)
-#define WATE_COVER_WAIT		(13000)
+#define FEATURE_WAVEON_COMMON
+#ifdef FEATURE_WAVEON_COMMON
+#include "ble_tracker_id.h"
+#include "esp_spiffs.h"
+#include "wifi_task.h"
+#include "ble_task.h"
+#include "aws_iot_task.h"
+#endif
 
 #define UART_BUF_SIZE      (1024)
 

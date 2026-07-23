@@ -5,69 +5,55 @@
 extern "C" {
 #endif
 
-typedef enum {
-    MT_PLATE_CMD = 0,
-    MT_PLATE_STOP_CMD,
-    MT_MAIN_CMD,
-    MT_WASTE_CMD,
-    MT_SCP_INOUT_CMD,
-    MT_SCP_SPIN_CMD,
-    MT_PAUSE_CMD,
-    MT_RESTORE_CMD,
-    MT_RESET_CMD,
-    MT_CMD_MAX
-} mt_cmd_t;
-
-typedef enum {
-	MT_IDLE_MODE = 0,
-	MAIN_MOTOR_MODE,
-	MAIN_MOTOR_MODE_1,
-	WASTE_MOTOR_MODE,
-	WASTE_MOTOR_MODE_1,
-	SCPINOUT_MOTOR_MODE,
-	SCPINOUT_MOTOR_MODE_1,
-	SCPSPIN_MOTOR_MODE,
-	SCPSPIN_MOTOR_MODE_1,
-	MT_ERROR_TIMEOUT,
-	MT_MODE_MAX
-} mt_mode_t;
-
-
 typedef struct {
     uint32_t task_id;
     uint32_t cmd;
     uint32_t angle;
     uint32_t direction;
     uint32_t timeout;
-    uint32_t cal;
+    bool cal;
 } mt_message_t;
+
+typedef enum {
+	DC_MOTOR = 0,
+	STEP_MOTOR,
+	
+	MOTOR_MAX
+} motor_t;
 
 typedef enum
 {
-	WASTE_FORWARD_CMD = 0x01,	// STEP MT
-	WASTE_REVERSE_CMD,
-    WASTE_STOP_CMD, 
-    PLATE_FORWARD_CMD,			// DC MT
-    PLATE_REVERSE_CMD,
-    PLATE_STOP_CMD, 
-    SCP_INOUT_FORWARD_CMD,		// DC MT
-    SCP_INOUT_REVERSE_CMD,
-    SCP_INOUT_STOP_CMD, 
-    SCP_SPIN_FORWARD_CMD,      	// STEP MT
-    SCP_SPIN_REVERSE_CMD,
-    SCP_SPIN_STOP_CMD, 
-    MAIN_FORWARD_CMD,      		// STEP MT
-    MAIN_REVERSE_CMD,
-    MAIN_STOP_CMD, 
+	WASTE_COVER_CMD = 0x01,
+    PLATE_CMD,
+    SCP_INOUT_CMD,
+    SCP_SPIN_CMD,
+    MAIN_COVER_CMD,
     
-} DC_MOTOR_CMD_T;
+    MOTOR_CMD_MAX
+} MOTOR_CMD_T;
+
+typedef enum
+{
+	FORWARD= 0,
+	REVERSE,
+    STOP    
+} MOTOR_DIRECTION_T;
+
+typedef enum
+{
+	PT_START= 0,
+	PT_END,
+    PT_MIDDLE    
+} MOTOR_POSITION_T;
 
 /* Includes ------------------------------------------------------------------*/
 
-void send_motor_msg(void *message, uint32_t cmd);
-int check_motor(void);
+int do_clean(void *arg);
+int do_manage_start(void *arg);
+int do_manage_finish(void *arg);
 
-void motor_task_init(void);
+int pt_test(void *arg);
+int motor_calibration(void *arg);
 
 
 #ifdef __cplusplus

@@ -1,4 +1,19 @@
-#include "main.h"
+#include "string.h"
+#include "wifi_task.h"
+#include "esp_netif.h"
+
+#include "protocol_examples_common.h"
+#include "esp_event.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+#include "esp_log.h"
+
+#include "protocol_examples_common.h"
+#include "example_common_private.h"
+//#include "app_led.h"
+#include "ble_task.h"
+#include "app_config_flash.h"
 
 static const char* TAG = __FILE__;
 
@@ -10,6 +25,8 @@ static const char* TAG = __FILE__;
 #include <esp_https_ota.h>
 
 #include <esp_ota_ops.h>
+#include "esp_netif_sntp.h"
+#include "esp_sntp.h"  // v5.x 호환용
 
 //메인 초기화 부분에 선언해두었던 이벤트 그룹과 비트들을 가져옵니다 (extern 또는 동일 파일 내 선언)
 EventGroupHandle_t s_wifi_event_group;
@@ -36,6 +53,7 @@ void Wifi_Disconnect(void)
     } else {
         ESP_LOGI(TAG, "현재 연결된 AP가 없습니다. 해제 생략.");
     }
+   
 }
 
 /**
@@ -43,7 +61,7 @@ void Wifi_Disconnect(void)
  */
 void Wifi_Connect(const char* target_ssid, const char* target_password)
 {
-//    led_bit_enable(PAIRING_BIT);
+
 
     // 1. 만약 어딘가 연결되어 있다면 먼저 끊어줍니다.
     Wifi_Disconnect();
@@ -62,7 +80,6 @@ void Wifi_Connect(const char* target_ssid, const char* target_password)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi 설정 적용 실패!");
         ble_send_data_to_queue((uint8_t*)"CONNECT_AP FAIL", strlen("CONNECT_AP FAIL"));
-//        led_bit_disable(PAIRING_BIT);
         return;
     }
 
@@ -85,17 +102,16 @@ void Wifi_Connect(const char* target_ssid, const char* target_password)
     // 8. 대기 결과에 따른 처리
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "새 AP 연결 최종 성공!");
-        ble_send_data_to_queue((uint8_t*)"CONNECT_AP SUCCESS", strlen("CONNECT_AP SUCCESS"));
+        //ble_send_data_to_queue((uint8_t*)"CONNECT_AP SUCCESS", strlen("CONNECT_AP SUCCESS"));
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGE(TAG, "새 AP 연결 실패 (비밀번호 오류 또는 AP 없음)!");
-        ble_send_data_to_queue((uint8_t*)"CONNECT_AP FAIL", strlen("CONNECT_AP FAIL"));
+        //ble_send_data_to_queue((uint8_t*)"CONNECT_AP FAIL", strlen("CONNECT_AP FAIL"));
     } else {
         ESP_LOGE(TAG, "새 AP 연결 타임아웃! (15초 초과)");
-        ble_send_data_to_queue((uint8_t*)"CONNECT_AP TIMEOUT", strlen("CONNECT_AP TIMEOUT"));
+        //ble_send_data_to_queue((uint8_t*)"CONNECT_AP TIMEOUT", strlen("CONNECT_AP TIMEOUT"));
         esp_wifi_disconnect(); // 타임아웃 났으니 연결 시도 중단
     }
 
-//    led_bit_disable(PAIRING_BIT);
 }
 /*
 void wifi_init_sta_static_ip(char* WIFI_SSID, char* WIFI_PASS)
@@ -132,9 +148,7 @@ void wifi_init_sta_static_ip(char* WIFI_SSID, char* WIFI_PASS)
     ESP_LOGI(TAG, "Wi-Fi STA static IP setup done");
 }*/
 
-#define WIFI_MAX_VALUE 30
-static wifi_ap_record_t ap_list[WIFI_MAX_VALUE];
-
+wifi_ap_record_t ap_list[WIFI_MAX_VALUE];
 
 uint16_t remove_duplicate_best_rssi(wifi_ap_record_t *list, uint16_t count)
 {
@@ -188,7 +202,7 @@ uint16_t wifi_scan_start(void)
         .show_hidden = false, // 숨겨진 SSID도 스캔
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
         .scan_time.active.min = 0,
-        .scan_time.active.max = 0
+        .scan_time.active.max = 0 편견을 가지고 한거야? 난 잘 모르겠는데..
     };
 
     memset(ap_list,0,sizeof(ap_list));
@@ -236,7 +250,7 @@ uint16_t wifi_scan_start(void)
         .scan_time.active.min = 0,
         .scan_time.active.max = 0
     };
-//    led_bit_enable(PAIRING_BIT);
+
     // 전역/기존 버퍼 초기화
     memset(ap_list, 0, sizeof(ap_list));
     uint16_t total_found_count = 0; // 중복 제거 후 최종적으로 모은 AP 개수
@@ -288,7 +302,7 @@ uint16_t wifi_scan_start(void)
 
         ESP_LOGI(TAG, "[스캔 %d회차 결과] 현재까지 중복 제거 후 수집된 AP: %d개 / 목표: %d개", 
                  scan_iter, total_found_count, WIFI_MAX_VALUE);
-
+                 
         // ⭐️ [조기 탈출 조건] 목표한 개수(WIFI_MAX_VALUE)를 다 채웠다면 3번 다 안 돌고 즉시 탈출!
         if (total_found_count >= WIFI_MAX_VALUE) {
             ESP_LOGI(TAG, "🎯 목표한 개수(%d개)를 모두 채워 스캔을 조기 종료합니다.", WIFI_MAX_VALUE);
@@ -302,30 +316,30 @@ uint16_t wifi_scan_start(void)
     }
     char strbuf[100];
     
-    ble_send_data_to_queue((uint8_t*)strbuf,sprintf((char*)strbuf,"SCAN %d",total_found_count));
-    vTaskDelay(pdMS_TO_TICKS(200));
+    //by.jeon 기존 Scan 결과 보내는 루틴 삭제
+    //ble_send_data_to_queue((uint8_t*)strbuf,sprintf((char*)strbuf,"SCAN %d",total_found_count));
+    //vTaskDelay(pdMS_TO_TICKS(200));
     
     // 🏁 최종 수집된 결과 로그 출력
-    for (int i = 0; i < total_found_count; i++) {
-        ESP_LOGI(TAG, "-> 최종 리스트 [%d] SSID: %s | RSSI: %d | 채널: %d", 
-                 i, ap_list[i].ssid, ap_list[i].rssi, ap_list[i].primary);
+    // for (int i = 0; i < total_found_count; i++) {
+    //     ESP_LOGI(TAG, "-> 최종 리스트 [%d] SSID: %s | RSSI: %d | 채널: %d", 
+    //              i, ap_list[i].ssid, ap_list[i].rssi, ap_list[i].primary);
 
-            int len = snprintf(
-                strbuf,
-                sizeof(strbuf),
-                "%d %s %d",
-                i,
-                ap_list[i].ssid,
-                ap_list[i].rssi
-            );
+    //         int len = snprintf(
+    //             strbuf,
+    //             sizeof(strbuf),
+    //             "%d %s %d",
+    //             i,
+    //             ap_list[i].ssid,
+    //             ap_list[i].rssi
+    //         );
 
-            ble_send_data_to_queue(
-                (uint8_t*)strbuf,
-                len
-            );
-    }
+    //         ble_send_data_to_queue(
+    //             (uint8_t*)strbuf,
+    //             len
+    //         );
+    // }
     ESP_LOGI(TAG, "최종 스캔 종료: 총 %d 개의 AP 확정", total_found_count);
-//    led_bit_disable(PAIRING_BIT);
     return total_found_count;
 }
 #endif
@@ -372,9 +386,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         // 💡 중요: 여기서 esp_wifi_connect()를 절대 호출하지 않습니다!
         // 드라이버가 준비 완료(Start) 되었다는 로그만 남깁니다.
+//        led_bit_enable(PAIRING_BIT);
         ESP_LOGI(TAG, "Wi-Fi 드라이버가 준비되었습니다 (STA_START).");
     } 
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+//            led_bit_enable(PAIRING_BIT);
             if (s_allow_reconnect) {
                 if (s_retry_num < MAXIMUM_RETRY) {
                     esp_wifi_connect();
@@ -390,6 +406,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "IP 할당 완료: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
+//        led_bit_disable(PAIRING_BIT);
+//        wifi_connect_success();
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         sntp_init_and_sync();
     }
@@ -416,7 +434,7 @@ void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI("WIFI", "Wi-Fi 초기화 완료! (대기 또는 자동 연결 진행 중)");
-    
+
     app_wifi_config_t* wifi_config = get_wifi_config();
     if ((wifi_config->conn_ssid[0] != '\0') &&  (wifi_config->conn_password[0] != '\0'))
         Wifi_Connect((char*)wifi_config->conn_ssid,(const char*)wifi_config->conn_password);

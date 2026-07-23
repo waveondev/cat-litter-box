@@ -3,47 +3,62 @@
 static const char *TAG = "DC_MOTOR_CTRL";
 
 // 모터 방향 정의
-//#define MT_DIR_NORMAL
-#ifdef MT_DIR_NORMAL
-#define MT_FORWARD_DIR  1
-#define MT_REVERSE_DIR  0
-#else
 #define MT_FORWARD_DIR  0
 #define MT_REVERSE_DIR  1
+
+#define PWM_FREQ_HZ             (25000)         // 25kHz PWM
+
+///////////////////////////////////////////////////////////////////////
+// SCP INOUT
+#define SCP_INOUT_PWM           (GPIO_NUM_8)
+#define SCP_INOUT_SEL           (GPIO_NUM_9)
+static mcpwm_cmpr_handle_t comparator_scp = NULL;
+volatile static bool mt_scp_inout_run = false;
+volatile static bool mt_scp_inout_dir = false;
+static QueueHandle_t scp_inout_motor_msg = NULL;
+
+
+///////////////////////////////////////////////////////////////////////
+// PLATE
+#ifdef FEATURE_MAIN_COVER_DC_MOTOR	
+#define PLATE_PWM               (GPIO_NUM_19)
+#define PLATE_SEL               (GPIO_NUM_47)
+#else
+#define PLATE_PWM               (GPIO_NUM_45)
+#define PLATE_SEL               (GPIO_NUM_38)
 #endif
 
-// 기본 하드웨어 핀 정의
-#define SCP_INOUT_PWM           (8)
-#define SCP_INOUT_SEL           (9)
-#define PLATE_PWM               (45)
-#define PLATE_SEL               (38)
-
-#define SCP_INOUT_ADC_CH        (ADC_CHANNEL_2) // Unit 1 Ch 2
-#define PLATE_ADC_CH            (ADC_CHANNEL_1) // Unit 1 Ch 1
-
-// 모터 및 전류 제어 파라미터
-#define PWM_FREQ_HZ             (25000)         // 25kHz PWM
-#define OVERCURRENT_THRESHOLD_MA (1200)        // 과전류 차단 임계값: 1250mA
-
-// ADC 설정 상수
-#define ADC_OUTPUT_BIT_WIDTH    (SOC_ADC_DIGI_MAX_BITWIDTH) // 12-bit
-#define ADC_READ_LEN            (256)
-
-// 전역 변수 핸들
-static mcpwm_cmpr_handle_t comparator_scp = NULL;
 static mcpwm_cmpr_handle_t comparator_plate = NULL;
-static adc_continuous_handle_t adc_handle = NULL;
+volatile static bool mt_plate_run = false;
+volatile static bool mt_plate_dir = false;
+static QueueHandle_t plate_motor_msg = NULL;
 
-static bool scp_inout_fault = false;
-static bool plate_fault = false;
-
-static QueueHandle_t dc_motor_msg = NULL;
-
-void send_dc_motor_msg(void *message, uint32_t cmd)
+void send_plate_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout)
 {
 	mt_message_t *msg = (mt_message_t *)message;
     msg->cmd = cmd;
-    BaseType_t status = xQueueSend(dc_motor_msg, msg, pdMS_TO_TICKS(100));
+    msg->angle = angle;
+    msg->direction = dir;
+    msg->timeout = timeout;
+    BaseType_t status = xQueueSend(plate_motor_msg, msg, pdMS_TO_TICKS(100));
+    if (status == pdPASS) 
+    {
+//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
+    } 
+    else 
+    {
+//        ESP_LOGW(TAG, "[Sender %ld] queuse full transfer failed", msg->task_id);
+    }
+}
+
+void send_scpinout_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout)
+{
+	mt_message_t *msg = (mt_message_t *)message;
+    msg->cmd = cmd;
+    msg->angle = angle;
+    msg->direction = dir;
+    msg->timeout = timeout;
+    BaseType_t status = xQueueSend(scp_inout_motor_msg, msg, pdMS_TO_TICKS(100));
     if (status == pdPASS) 
     {
 //        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
@@ -124,16 +139,13 @@ static void init_mcpwm_system(void)
     ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
 }
 
-/**
- * 3-1. SCP_INOUT 모터 제어
- */
-static void set_motor_speed_scp_inout(int speed_pct)
+static void scp_inout_motor_move(int speed_pct)
 {
     ESP_LOGI(TAG, "%s speed_pct %d ", __func__, speed_pct);
-    if (scp_inout_fault) {
+/*    if (scp_inout_fault) {
         mcpwm_comparator_set_compare_value(comparator_scp, 0);
         return;
-    }
+    } */
     uint32_t compare_val = (uint32_t)((abs(speed_pct) * 400) / 100);
 
     if (speed_pct > 0) {
@@ -147,17 +159,13 @@ static void set_motor_speed_scp_inout(int speed_pct)
     }
 }
 
-/**
- * 3-2. PLATE 모터 제어
- */
-static void set_motor_speed_plate(int speed_pct)
+static void plate_motor_move(int speed_pct)
 {
 //    ESP_LOGI(TAG, "%s speed_pct %d ", __func__, speed_pct);
-    
-    if (plate_fault) {
+/*    if (plate_fault) {
         mcpwm_comparator_set_compare_value(comparator_plate, 0);
         return;
-    }
+    } */
     uint32_t compare_val = (uint32_t)((abs(speed_pct) * 400) / 100);
 
     if (speed_pct > 0) {
@@ -171,132 +179,104 @@ static void set_motor_speed_plate(int speed_pct)
     }
 }
 
-/**
- * 4. ADC 연속 모드 초기화 (두 채널을 멀티플렉싱 스캔하도록 통합)
- */
-static void init_adc_continuous_system(void)
+bool get_dcmotor_run(dc_motor_t mt)
 {
-    ESP_LOGI(TAG, "%s", __func__);
-
-    adc_continuous_handle_cfg_t adc_config = {
-        .max_store_buf_size = 2048,
-        .conv_frame_size = ADC_READ_LEN,
-    };
-    ESP_ERROR_CHECK(adc_continuous_new_handle(&adc_config, &adc_handle));
-
-    adc_continuous_config_t dig_config = {
-        .sample_freq_hz = 40 * 1000, // 채널당 20kHz씩 할당하기 위해 전체 40kHz 샘플링 설정
-        .conv_mode = ADC_CONV_SINGLE_UNIT_1,
-        .format = ADC_DIGI_OUTPUT_FORMAT_TYPE2,
-    };
-
-    // 2개의 채널 패턴 리스트 등록 (스캔 순서 정의)
-    static adc_digi_pattern_config_t adc_patterns[2] = {
-        {
-            .atten = ADC_ATTEN_DB_12,
-            .channel = SCP_INOUT_ADC_CH,
-            .unit = ADC_UNIT_1,
-            .bit_width = ADC_OUTPUT_BIT_WIDTH,
-        },
-        {
-            .atten = ADC_ATTEN_DB_12,
-            .channel = PLATE_ADC_CH,
-            .unit = ADC_UNIT_1,
-            .bit_width = ADC_OUTPUT_BIT_WIDTH,
-        }
-    };
-
-    dig_config.pattern_num = 2;
-    dig_config.adc_pattern = adc_patterns;
-
-    ESP_ERROR_CHECK(adc_continuous_config(adc_handle, &dig_config));
-    ESP_ERROR_CHECK(adc_continuous_start(adc_handle));
+	bool ret = false;
+	if(mt == PLATE_MOTOR)
+	{
+		ret = mt_plate_run;
+	}
+	else if(mt == SCPINOUT_MOTOR)
+	{
+		ret = mt_scp_inout_run;
+	}
+	return ret;
 }
 
-/**
- * 5. 다중 모터 피드백 데이터 모니터링 및 과전류 차단 통합 태스크
- */
-static void current_monitor_task_system(void *arg)
+bool get_dcmotor_dir(dc_motor_t mt)
 {
-    uint8_t result[ADC_READ_LEN] = {0};
-    uint32_t ret_num = 0;
-
-    while (1) {
-        esp_err_t ret = adc_continuous_read(adc_handle, result, ADC_READ_LEN, &ret_num, 10);
-        if (ret == ESP_OK) {
-            uint32_t scp_sum_voltage_mv = 0, scp_count = 0;
-            uint32_t plate_sum_voltage_mv = 0, plate_count = 0;
-
-            for (int i = 0; i < ret_num; i += SOC_ADC_DIGI_DATA_BYTES_PER_CONV) {
-                adc_digi_output_data_t *p = (adc_digi_output_data_t *)&result[i];
-                uint32_t chan = p->type2.channel;
-                uint32_t data = p->type2.data & 0xFFF; // 12-bit 마스킹 데이터 추출 안정화
-
-                if (chan == SCP_INOUT_ADC_CH) {
-                    uint32_t mv = (data * 3100) / 4095;
-                    scp_sum_voltage_mv += mv;
-                    scp_count++;
-                } else if (chan == PLATE_ADC_CH) {
-                    uint32_t mv = (data * 3100) / 4095;
-                    plate_sum_voltage_mv += mv;
-                    plate_count++;
-                }
-            }
-
-            // 1) SCP_INOUT 과전류 연산 및 처리
-            if (scp_count > 0) {
-                uint32_t avg_voltage_mv = scp_sum_voltage_mv / scp_count;
-                uint32_t current_ma = avg_voltage_mv / 2;
-
-                if (current_ma >= OVERCURRENT_THRESHOLD_MA && !scp_inout_fault) {
-                    scp_inout_fault = true;
-                    set_motor_speed_scp_inout(0);
-                    ESP_LOGE(TAG, "[SCP FAULT] OVERCURRENT DETECTED! Halted. Current: %ld mA", current_ma);
-                }
-            }
-
-            // 2) PLATE 과전류 연산 및 처리
-            if (plate_count > 0) {
-                uint32_t avg_voltage_mv = plate_sum_voltage_mv / plate_count;
-                uint32_t current_ma = avg_voltage_mv / 2;
-
-                if (current_ma >= OVERCURRENT_THRESHOLD_MA && !plate_fault) {
-                    plate_fault = true;
-                    set_motor_speed_plate(0);
-                    ESP_LOGE(TAG, "[PLATE FAULT] OVERCURRENT DETECTED! Halted. Current: %ld mA", current_ma);
-                }
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms 주기 모니터링
-    }
+	bool ret = false;
+	if(mt == PLATE_MOTOR)
+	{
+		ret = mt_plate_dir;
+	}
+	else if(mt == SCPINOUT_MOTOR)
+	{
+		ret = mt_scp_inout_dir;
+	}
+	return ret;
 }
 
-void dc_motor_control_task(void *arg) {
+void plate_cmd_task(void *arg) {
     ESP_LOGI(TAG, "%s +", __func__);
 
     while (1) {
         mt_message_t msg = {0};
-        if (xQueueReceive(dc_motor_msg, &msg, portMAX_DELAY) == pdPASS) {
+        if (xQueueReceive(plate_motor_msg, &msg, portMAX_DELAY) == pdPASS) {
 //        	ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
             switch((int)(msg.cmd))
             {
-                case PLATE_FORWARD_CMD:
-                    set_motor_speed_plate(99);
+                case PLATE_CMD:
+                	if(msg.direction == FORWARD)
+                	{
+//                		ESP_LOGI(TAG, "%s forward ", __func__);
+						plate_motor_move(-99);
+                        mt_plate_dir = false;
+                        mt_plate_run = true;
+                	}
+                	else if(msg.direction == REVERSE)
+                	{
+//                		ESP_LOGI(TAG, "%s reverse ", __func__);
+						plate_motor_move(99);
+                        mt_plate_dir = true;
+                        mt_plate_run = true;
+                	}
+                	else if(msg.direction == STOP)
+                	{
+//                		ESP_LOGI(TAG, "%s stop ", __func__);
+                        plate_motor_move(0);
+                        mt_plate_run = false;
+                	}
                     break;
-                case PLATE_REVERSE_CMD:
-                    set_motor_speed_plate(-99);
-                    break;
-                case PLATE_STOP_CMD: 
-                    set_motor_speed_plate(0);
-                    break;
-                case SCP_INOUT_FORWARD_CMD:
-                    set_motor_speed_scp_inout(-99);
-                    break;
-                case SCP_INOUT_REVERSE_CMD:
-                    set_motor_speed_scp_inout(99);
-                    break;
-                case SCP_INOUT_STOP_CMD:
-                    set_motor_speed_scp_inout(0);
+                
+                default:
+                break;
+            }
+        }
+    }
+//    ESP_LOGI(TAG, "%s -", __func__);
+    vTaskDelete(NULL);
+}
+
+void scpinout_cmd_task(void *arg) {
+    ESP_LOGI(TAG, "%s +", __func__);
+
+    while (1) {
+        mt_message_t msg = {0};
+        if (xQueueReceive(scp_inout_motor_msg, &msg, portMAX_DELAY) == pdPASS) {
+//        	ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
+            switch((int)(msg.cmd))
+            {
+                case SCP_INOUT_CMD:
+                	if(msg.direction == FORWARD)
+                	{
+                		ESP_LOGI(TAG, "debug 1 ");
+						scp_inout_motor_move(-99);
+                        mt_scp_inout_dir = false;
+                        mt_scp_inout_run = true;
+                		ESP_LOGI(TAG, "debug 2 ");
+                	}
+                	else if(msg.direction == REVERSE)
+                	{
+						scp_inout_motor_move(99);
+                        mt_scp_inout_dir = true;
+                        mt_scp_inout_run = true;
+                	}
+                	else if(msg.direction == STOP)
+                	{
+                        scp_inout_motor_move(0);
+                        mt_scp_inout_run = false;
+                	}
                     break;
                 
                 default:
@@ -314,11 +294,11 @@ void dc_motor_init(void)
 	
     init_system_gpios();
     init_mcpwm_system();
-    init_adc_continuous_system();
 
-    dc_motor_msg = xQueueCreate(10, sizeof(mt_message_t));
+    plate_motor_msg = xQueueCreate(10, sizeof(mt_message_t));
+    scp_inout_motor_msg = xQueueCreate(10, sizeof(mt_message_t));
 
     // 2. 모니터링 태스크 생성
-    xTaskCreate(current_monitor_task_system, "current_monitor_task", 4096, NULL, 5, NULL);
-    xTaskCreate(dc_motor_control_task, "dc_motor_control_task", 4096, NULL, 5, NULL);
+    xTaskCreate(plate_cmd_task, "plate_cmd_task", 3072, NULL, 5, NULL);
+    xTaskCreate(scpinout_cmd_task, "scpinout_cmd_task", 3072, NULL, 5, NULL);
 }

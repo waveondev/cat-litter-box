@@ -1,415 +1,478 @@
 #include "main.h"
 
 static const char *TAG = "MOTOR";
-static SemaphoreHandle_t mt_mutex;
-static QueueHandle_t motor_msg = NULL;
-
-void send_motor_msg(void *message, uint32_t cmd)
+#define MOTOR_CMD_TRANSFER_DELAY	(50)
+int spin_angle[10] = {0, 34, 87, 155, 167, 193, 205, 282, 323, 355};
+static int pt_check(int sel, int mt)
 {
-	mt_message_t *msg = (mt_message_t *)message;
-    msg->cmd = cmd;
-    BaseType_t status = xQueueSend(motor_msg, msg, pdMS_TO_TICKS(100));
-    if (status == pdPASS) 
-    {
-//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
-    } 
-    else 
-    {
-//        ESP_LOGW(TAG, "[Sender %ld] queuse full transfer failed", msg->task_id);
-    }
+	int ret = 0;
+	if(sel == STEP_MOTOR)
+	{
+		if(mt == MAIN_COVER_MOTOR)
+		{
+			if((get_pt_status()&PT_BIT_MCOVER_CLOSE) || (get_pt_status()&PT_BIT_MCOVER_OPEN))
+			{
+				return 1;
+			}
+		}
+#if 0			// not implemented yet, for mechanic issue
+		else if(mt == WASTE_COVER_MOTOR)
+		{
+			if((get_pt_status()&PT_BIT_WASTE_OPEN) || (get_pt_status()&PT_BIT_WASTE_CLOSE))
+			{
+				return 1;
+			}
+		}
+		else if(mt == SCPSPIN_MOTOR)
+		{
+			if((get_pt_status()&PT_BIT_SCP_SPIN_ED) || (get_pt_status()&PT_BIT_SCP_SPIN_ST))
+			{
+				return 1;
+			}
+		}
+#endif
+	}
+	else if(sel == DC_MOTOR)
+	{
+		if(mt == SCPINOUT_MOTOR)
+		{
+			if((get_pt_status()&PT_BIT_SCP_OUT) || (get_pt_status()&PT_BIT_SCP_IN))
+			{
+				return 1;
+			}
+		}
+	}
+	return ret;
 }
 
-static int64_t start_tm, end_tm, elapsed, pt_status;
-static int mt_angle = 0;
-static int mt_dir = 0;
-static int mt_timeout = 0;
-static int mt_pause = 0;
-static int mt_mode = MT_IDLE_MODE;
-static int mt_mode_backup = MT_IDLE_MODE;
-static int mt_plate_run = 0;
-static int mt_cal = 0;
-static int set_mt_mode(int mode)
+static int wait_motor_operation(int sel, int mt, int timeout)
 {
-    if (xSemaphoreTake(mt_mutex, portMAX_DELAY) == pdTRUE) 
-    {
-        mt_mode = mode;
-        xSemaphoreGive(mt_mutex);
-    }
+	int ret = 0;
+	int i;
+	
+    int64_t start, end, elapsed;
+    start = esp_timer_get_time();
+    i = 0;
+    do{
+        vTaskDelay(pdMS_TO_TICKS(10));
+        i++;
+        if(i>100)
+        {
+	        ret = pt_check(sel, mt);
+	        if(ret == 1)
+	        {
+	        	ESP_LOGI(TAG, "pt matched!");
+	            return 0;	// reach destination
+	        }
+        }
+        else
+        {
+//        	ESP_LOGI(TAG, "wait 1 sec");
+        }
+		end = esp_timer_get_time();
+		elapsed = (end-start)/1000;
+		if(elapsed >= timeout)
+		{
+            ESP_LOGI(TAG, "%s timeout, sel %d mt %d timeout %d ", __func__, sel, mt, timeout);
+			return -1;	// timeout
+		}
+		if(sel == DC_MOTOR)
+		{
+            if(!get_dcmotor_run(mt))
+            {
+            	ESP_LOGI(TAG, "dc motor %d finished to run!", mt);
+                return 0;
+            }
+		}
+		else if(sel == STEP_MOTOR)
+		{
+            if(!get_stepmotor_run(mt))
+            {
+            	ESP_LOGI(TAG, "step motor %d finished to run!", mt);
+                return 0;
+            }
+		}
+    } while(1);
+	return ret;
+}
+
+int motor_calibration(void *arg)
+{
+	int pt;
+//	int ret;
+    mt_message_t msg = {0};
+	int main_cover, waste_cover, scp_inout;
+    msg.task_id = (uint32_t)arg;
+
+	
+    ESP_LOGI(TAG, "pt status check");
+    pt = get_pt_status();
+    
+    // main cover check
+	if(pt&PT_BIT_MCOVER_OPEN)
+	{
+		main_cover = PT_END;
+	}
+	else if(pt&PT_BIT_MCOVER_CLOSE)
+	{
+		main_cover = PT_START;
+	}
+	else
+	{
+		main_cover = PT_MIDDLE;
+	}
+	// waste cover check
+	if(pt&PT_BIT_WASTE_OPEN)
+	{
+		waste_cover = PT_END;
+	}
+	else if(pt&PT_BIT_WASTE_CLOSE)
+	{
+		waste_cover = PT_START;
+	}
+	else
+	{
+		waste_cover = PT_MIDDLE;
+	}
+	// scp inout check
+	if(pt&PT_BIT_SCP_OUT)
+	{
+	    scp_inout = PT_END;
+	}
+	else if(pt&PT_BIT_SCP_IN)
+	{
+	    scp_inout = PT_START;
+	}
+	else
+	{
+	    scp_inout = PT_MIDDLE;
+	}
+#if 0
+	// main cover open
+	if(main_cover == PT_MIDDLE || main_cover == PT_START)
+	{
+		send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, FORWARD, 5000);
+        do{
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+            pt = get_pt_status();
+            if(pt&PT_BIT_MCOVER_OPEN)
+            {
+            	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+            	break;
+            }
+            if(!get_stepmotor_run(MAIN_COVER_MOTOR))
+            {
+                break;
+            }
+        } while(1);
+	}
+#endif
+	if(waste_cover == PT_START)
+	{
+		if(scp_inout != PT_END)
+		{
+	        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+	        do{
+	            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+	            pt = get_pt_status();
+	            if(pt&PT_BIT_SCP_OUT)
+	            {
+	            	ESP_LOGI(TAG, "scp inout pt end");
+	                send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+	                break;
+	            }
+	            if(!get_dcmotor_run(SCPINOUT_MOTOR))
+	            {
+	            	ESP_LOGI(TAG, "scp inout run false");
+	                break;
+	            }
+			} while(1);
+		}
+	}
+	else if(waste_cover == PT_END)
+	{
+		if(scp_inout != PT_END)
+		{
+	        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+	        do{
+	            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+	            pt = get_pt_status();
+	            if(pt&PT_BIT_SCP_OUT)
+	            {
+	                send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+	                break;
+	            }
+	            if(!get_dcmotor_run(SCPINOUT_MOTOR))
+	            {
+	                break;
+	            }
+			} while(1);
+		}
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+        do{
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+            pt = get_pt_status();
+            if(pt&PT_BIT_WASTE_CLOSE)
+            {
+                send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+                break;
+            }
+            if(!get_stepmotor_run(WASTE_COVER_MOTOR))
+            {
+                break;
+            }
+        } while(1);
+	}
+	else
+	{
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+        do{
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+            pt = get_pt_status();
+            if(pt&PT_BIT_WASTE_CLOSE)
+            {
+                send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+                break;
+            }
+            if(!get_stepmotor_run(WASTE_COVER_MOTOR))
+            {
+                break;
+            }
+        } while(1);
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+        do{
+            vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+            pt = get_pt_status();
+            if(pt&PT_BIT_SCP_OUT)
+            {
+                send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+                break;
+            }
+            if(!get_dcmotor_run(SCPINOUT_MOTOR))
+            {
+                break;
+            }
+        } while(1);
+	}
+
+   	ESP_LOGI(TAG, "find scoop spin origin");
+    if(!((pt&PT_BIT_SCP_SPIN_ST) && (pt&PT_BIT_SCP_SPIN_ED)))
+	{
+		send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 360, FORWARD, 15000);
+	    do{
+	        vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+	        pt = get_pt_status();
+			if((pt&PT_BIT_SCP_SPIN_ST) && (pt&PT_BIT_SCP_SPIN_ED))
+			{
+				// check origin angle
+            	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 0, STOP, 0);
+				ESP_LOGI(TAG, "check origin angle %d ", (get_scpspin_cnt()*360)/10200);
+				break;
+			}
+			if(!get_stepmotor_run(SCPSPIN_MOTOR))
+			{
+				break;
+			}
+/*
+			if(get_pt_status()&PT_BIT_SCP_SPIN_ED)
+			{
+				ESP_LOGI(TAG, "ED matched %d dgree ", (get_scpspin_cnt()*360)/10200);
+			}
+			else if(get_pt_status()&PT_BIT_SCP_SPIN_ST)
+			{
+				ESP_LOGI(TAG, "ST matched %d degree ", (get_scpspin_cnt()*360)/10200);
+			} */
+	    } while(1);
+	}
+	
+    send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 90, REVERSE, 10000);
+    do{
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+        if(!get_stepmotor_run(SCPSPIN_MOTOR))
+        {
+            break;
+        }
+    } while(1);
+
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 5000);
+    do{
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+        pt = get_pt_status();
+        if(pt&PT_BIT_SCP_IN)
+        {
+            send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+            break;
+        }
+        if(!get_dcmotor_run(SCPINOUT_MOTOR))
+        {
+            break;
+        }
+    } while(1);
+
+    send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 20, REVERSE, 5000);
+    do{
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+        if(!get_stepmotor_run(SCPSPIN_MOTOR))
+        {
+            break;
+        }
+    } while(1);
+#if 0
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, REVERSE, 5000);
+    do{
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_CMD_TRANSFER_DELAY));
+        pt = get_pt_status();
+        if(pt&PT_BIT_MCOVER_CLOSE)
+        {
+            send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+            break;
+        }
+        if(!get_stepmotor_run(MAIN_COVER_MOTOR))
+        {
+            break;
+        }
+    } while(1);
+#endif
     return 0;
 }
 
-static int mt_restore_proc(void *arg)
+int do_clean(void *arg)
 {
-    mt_message_t msg = {0};
-    msg.task_id = (uint32_t)arg;
+	mt_message_t msg = {0};
+	message_t led_msg;
+	msg.task_id = (uint32_t)arg;
+	led_msg.task_id = (uint32_t)arg;
 
-	if(mt_plate_run & 0x01)
-	{
-		if(mt_plate_run & 0x80)
-		{
-	        send_dc_motor_msg(&msg, PLATE_FORWARD_CMD);
-		}
-		else if(mt_plate_run & 0x40)
-		{
-			send_dc_motor_msg(&msg, PLATE_REVERSE_CMD);
-		}
-	}
-    set_mt_mode(mt_mode_backup);
-	return 0;
-}
+	send_led_cmd_msg(&led_msg, LED_CLEANING_CMD);
+#if 0
 
-static int mt_pause_proc(mt_message_t *msg)
-{
-    ESP_LOGI(TAG, "%s %d", __func__, mt_mode);
-    switch(mt_mode)
-    {
-		case MAIN_MOTOR_MODE_1:
-            send_step_motor_msg(msg, MAIN_STOP_CMD);
-			mt_mode_backup = MAIN_MOTOR_MODE;
-		break;
-		case WASTE_MOTOR_MODE_1:
-            send_step_motor_msg(msg, WASTE_STOP_CMD);
-			mt_mode_backup = WASTE_MOTOR_MODE;
-		break;
-		case SCPINOUT_MOTOR_MODE_1:
-            send_dc_motor_msg(msg, SCP_INOUT_STOP_CMD);
-			mt_mode_backup = SCPINOUT_MOTOR_MODE;
-		break;
-		case SCPSPIN_MOTOR_MODE_1:
-            send_step_motor_msg(msg, SCP_SPIN_STOP_CMD);
-			mt_mode_backup = SCPSPIN_MOTOR_MODE;
-		break;
-		default:
-		break;
-    }
-    if(mt_plate_run)
-    {
-		send_dc_motor_msg(msg, PLATE_STOP_CMD);
-    }
-    set_mt_mode(MT_IDLE_MODE);
-	return 0;
-}
-
-void motor_process_task(void *arg)
-{
-//	ESP_LOGI(TAG, "%s +", __func__);
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 30, FORWARD, 5000);
+	vTaskDelay(pdMS_TO_TICKS(5000));
+#else
+	// plate rotate start
+	send_plate_msg(&msg, PLATE_CMD, 0, FORWARD, 0);
 	
+	// main cover open
+//	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, FORWARD, 10000);
+//	wait_motor_operation(STEP_MOTOR, MAIN_COVER_MOTOR, 10000);
+//	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+	
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 180, FORWARD, 3000);
+	vTaskDelay(pdMS_TO_TICKS(500));
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+	wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+	ESP_LOGI(TAG, "wait plate rotate .... ");
+	vTaskDelay(pdMS_TO_TICKS(5000));
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 70, REVERSE, 10000);
+	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
+	
+	wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000);
+	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+
+	ESP_LOGI(TAG, "scp inout back ");
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
+    wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 110, REVERSE, 10000);
+	wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000);
+//	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 0, STOP, 0);
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 20, FORWARD, 1000);
+	wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 1000);
+//	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 0, STOP, 0);
+
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+    wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+    wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 5000);
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 140, REVERSE, 5000);
+    wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000);
+
+	ESP_LOGI(TAG, "flattening .... ");
+	vTaskDelay(pdMS_TO_TICKS(5000));	// flattening
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 140, FORWARD, 5000);
+    wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000);
+
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
+    wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 20, REVERSE, 5000);
+    wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000);
+
+//	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, REVERSE, 10000);
+//	wait_motor_operation(STEP_MOTOR, MAIN_COVER_MOTOR, 10000);
+//	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+
+	send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
+#endif
+	send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
+	
+	return 0;
+}
+
+int do_manage_start(void *arg)
+{
     mt_message_t msg = {0};
     msg.task_id = (uint32_t)arg;
+
+    // main cover open
+//  send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, FORWARD, 15000);
+//  wait_motor_operation(STEP_MOTOR, MAIN_COVER_MOTOR, 5000);
+//  send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+    wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+	return 0;
+}
+
+int do_manage_finish(void *arg)
+{
+    mt_message_t msg = {0};
+    msg.task_id = (uint32_t)arg;
+
+
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
+    wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
     
-    while (1)
-    {
-    	switch(mt_mode)
-    	{
-			case MT_IDLE_MODE:
-			break;
-
-			case MAIN_MOTOR_MODE:
-				if(!mt_dir)
-				{
-					send_step_motor_msg(&msg, MAIN_FORWARD_CMD);
-				}
-				else
-				{
-					send_step_motor_msg(&msg, MAIN_REVERSE_CMD);
-				}
-	            start_tm = esp_timer_get_time();
-	            set_mt_mode(MAIN_MOTOR_MODE_1);
-			break;
-			case MAIN_MOTOR_MODE_1:
-				end_tm = esp_timer_get_time();
-	            elapsed = (end_tm - start_tm) / 1000; 
-	            pt_status = get_pt_status();
-	            if(mt_pause)
-	            {
-	            	mt_pause_proc(&msg);
-	            }
-	            else if(!get_step_motor_run(MAIN_COVER_MOTOR))
-	            {
-	                send_step_motor_msg(&msg, MAIN_STOP_CMD);
-					set_mt_mode(MT_IDLE_MODE);
-	            }
-	            if (elapsed >= mt_timeout) 
-	            {
-	            	// timeout
-	                send_step_motor_msg(&msg, MAIN_STOP_CMD);
-	                set_mt_mode(MT_ERROR_TIMEOUT);
-	                break;
-	            }
-/*				else if(!mt_cal && !mt_dir && (pt_status & PT_BIT_MCOVER_OPEN))
-				{
-					pt_status &=~(PT_BIT_MCOVER_OPEN); // clear bit
-					set_pt_status(pt_status);
-	                send_step_motor_msg(&msg, MAIN_STOP_CMD);
-					set_mt_mode(MT_IDLE_MODE);
-				}
-                else if(!mt_cal && mt_dir && (pt_status & PT_BIT_MCOVER_CLOSE))
-                {
-                    pt_status &=~(PT_BIT_MCOVER_CLOSE); // clear bit
-                    set_pt_status(pt_status);
-                    send_step_motor_msg(&msg, MAIN_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                } */
-			break;
-
-			case WASTE_MOTOR_MODE:
-                if(!mt_dir)
-                {
-                    send_step_motor_msg(&msg, WASTE_FORWARD_CMD);
-                }
-                else
-                {
-                    send_step_motor_msg(&msg, WASTE_REVERSE_CMD);
-                }
-                start_tm = esp_timer_get_time();
-                set_mt_mode(WASTE_MOTOR_MODE_1);
-            break;
-            case WASTE_MOTOR_MODE_1:
-                end_tm = esp_timer_get_time();
-                elapsed = (end_tm - start_tm) / 1000; 
-                pt_status = get_pt_status();
-	            if(mt_pause)
-	            {
-	            	mt_pause_proc(&msg);
-	            }
-	            else if(!get_step_motor_run(WASTE_COVER_MOTOR))
-	            {
-	                send_step_motor_msg(&msg, WASTE_STOP_CMD);
-					set_mt_mode(MT_IDLE_MODE);
-	            }
-                if (elapsed >= mt_timeout) 
-                {
-                    // timeout
-                    send_step_motor_msg(&msg, WASTE_STOP_CMD);
-                    set_mt_mode(MT_ERROR_TIMEOUT);
-                    break;
-                }
-/*                else if(!mt_cal && !mt_dir && (pt_status & PT_BIT_WASTE_OPEN))
-                {
-                    pt_status &=~(PT_BIT_WASTE_OPEN); // clear bit
-                    set_pt_status(pt_status);
-                    send_step_motor_msg(&msg, WASTE_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                }
-                else if(!mt_cal && mt_dir && (pt_status & PT_BIT_WASTE_CLOSE))
-                {
-                    pt_status &=~(PT_BIT_WASTE_CLOSE); // clear bit
-                    set_pt_status(pt_status);
-                    send_step_motor_msg(&msg, WASTE_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                } */
-            break;
-
-			case SCPINOUT_MOTOR_MODE:
-                if(!mt_dir)
-                {
-                    send_dc_motor_msg(&msg, SCP_INOUT_FORWARD_CMD);
-                }
-                else
-                {
-                    send_dc_motor_msg(&msg, SCP_INOUT_REVERSE_CMD);
-                }
-                start_tm = esp_timer_get_time();
-                set_mt_mode(SCPINOUT_MOTOR_MODE_1);
-			break;
-			case SCPINOUT_MOTOR_MODE_1:
-                end_tm = esp_timer_get_time();
-                elapsed = (end_tm - start_tm) / 1000; 
-                pt_status = get_pt_status();
-	            if(mt_pause)
-	            {
-	            	mt_pause_proc(&msg);
-	            }
-                if (elapsed >= mt_timeout) 
-                {
-                    // timeout
-	            	ESP_LOGI(TAG, "SCPINOUT_MOTOR_MODE_1 timeout");
-                    send_dc_motor_msg(&msg, SCP_INOUT_STOP_CMD);
-                    set_mt_mode(MT_ERROR_TIMEOUT);
-                    break;
-                }
-                else if(!mt_cal && !mt_dir && (pt_status & PT_BIT_SCP_OUT))
-                {
-	            	ESP_LOGI(TAG, "PT_BIT_SCP_OUT");
-                    pt_status &=~(PT_BIT_SCP_OUT); // clear bit
-                    set_pt_status(pt_status);
-                    send_dc_motor_msg(&msg, SCP_INOUT_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                }
-                else if(!mt_cal && mt_dir && (pt_status & PT_BIT_SCP_IN))
-                {
-	            	ESP_LOGI(TAG, "PT_BIT_SCP_IN");
-                    pt_status &=~(PT_BIT_SCP_IN); // clear bit
-                    set_pt_status(pt_status);
-                    send_dc_motor_msg(&msg, SCP_INOUT_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                }
-			break;
-
-			case SCPSPIN_MOTOR_MODE:
-                if(!mt_dir)
-                {
-                	msg.angle = mt_angle;
-                    send_step_motor_msg(&msg, SCP_SPIN_FORWARD_CMD);
-                }
-                else
-                {
-                	msg.angle = mt_angle;
-                    send_step_motor_msg(&msg, SCP_SPIN_REVERSE_CMD);
-                }
-                start_tm = esp_timer_get_time();
-                set_mt_mode(SCPSPIN_MOTOR_MODE_1);
-            break;
-            case SCPSPIN_MOTOR_MODE_1:
-                end_tm = esp_timer_get_time();
-                elapsed = (end_tm - start_tm) / 1000; 
-                pt_status = get_pt_status();
-	            if(mt_pause)
-	            {
-	            	mt_pause_proc(&msg);
-	            }
-	            else if(!get_step_motor_run(SCP_SPIN_MOTOR))
-	            {
-	                send_step_motor_msg(&msg, SCP_SPIN_STOP_CMD);
-					set_mt_mode(MT_IDLE_MODE);
-	            }
-                if (elapsed >= mt_timeout) 
-                {
-                    // timeout
-                    send_step_motor_msg(&msg, SCP_SPIN_STOP_CMD);
-                    set_mt_mode(MT_ERROR_TIMEOUT);
-                    break;
-                }
-/*                else if(!mt_cal && !mt_dir && (pt_status & PT_BIT_SCP_SPIN_ST))
-                {
-                    pt_status &=~(PT_BIT_SCP_SPIN_ST); // clear bit
-                    set_pt_status(pt_status);
-                    send_step_motor_msg(&msg, SCP_SPIN_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                }
-                else if(!mt_cal && mt_dir && (pt_status & PT_BIT_SCP_SPIN_ED))
-                {
-                    pt_status &=~(PT_BIT_SCP_SPIN_ED); // clear bit
-                    set_pt_status(pt_status);
-                    send_step_motor_msg(&msg, SCP_SPIN_STOP_CMD);
-                    set_mt_mode(MT_IDLE_MODE);
-                } */
-            break;
-
-			case MT_ERROR_TIMEOUT:
-				break;
-				
-			default:
-				break;
-    	}
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    // main cover close
+//  send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, REVERSE, 5000);
+//  wait_motor_operation(STEP_MOTOR, MAIN_COVER_MOTOR, 5000);
+//  send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+	return 0;
 }
 
-int check_motor(void)
+int pt_test(void *arg)
 {
-	int ret = 1;
-	if(mt_pause)
-	{
-		ret = 1;
-	}
-	else if(mt_mode == MT_IDLE_MODE)
-	{
-		ret = 0;
-	}
-	else if(mt_mode == MT_ERROR_TIMEOUT)
-	{
-		ret = -1;
-	}
-	return ret;	// running
-}
+//	mt_message_t msg = {0};
+//	msg.task_id = (uint32_t)arg;
 
-// 메인 태스크 루프
-void motor_task(void *arg) 
-{
-    ESP_LOGI(TAG, "%s +", __func__);
-    while (1) {
-        mt_message_t msg = {0};
-        if (xQueueReceive(motor_msg, &msg, portMAX_DELAY) == pdPASS) {
-//          ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
-            switch((int)(msg.cmd))
-            {
-                case MT_PLATE_CMD:
-                	mt_plate_run = 0;
-	                if(msg.direction)
-	                {
-						send_dc_motor_msg(&msg, PLATE_FORWARD_CMD);
-						mt_plate_run = 1 | 0x80;
-					}
-					else
-					{
-						send_dc_motor_msg(&msg, PLATE_REVERSE_CMD);
-						mt_plate_run = 1 | 0x40;
-					}
-                break;
-                case MT_PLATE_STOP_CMD:
-                	send_dc_motor_msg(&msg, PLATE_STOP_CMD);
-                    mt_plate_run = 0;
-                break;
-                case MT_MAIN_CMD:
-                	mt_angle = (int)msg.angle;
-                	mt_dir = (int)msg.direction;
-                	mt_timeout = (int)msg.timeout;
-                    set_mt_mode(MAIN_MOTOR_MODE);
-                break;
-                case MT_WASTE_CMD:
-                	mt_angle = (int)msg.angle;
-                	mt_dir = (int)msg.direction;
-                	mt_timeout = (int)msg.timeout;
-                    set_mt_mode(WASTE_MOTOR_MODE);
-                break;
-                case MT_SCP_INOUT_CMD:
-                	mt_angle = (int)msg.angle;
-                	mt_dir = (int)msg.direction;
-                	mt_timeout = (int)msg.timeout;
-	            	ESP_LOGI(TAG, "MT_SCP_INOUT_CMD %d %d %d", mt_angle, mt_dir, mt_timeout);
-                    set_mt_mode(SCPINOUT_MOTOR_MODE);
-                break;
-                case MT_SCP_SPIN_CMD:
-                	mt_angle = (int)msg.angle;
-                	mt_dir = (int)msg.direction;
-                	mt_timeout = (int)msg.timeout;
-                	mt_cal = (int)msg.cal;
-                    set_mt_mode(SCPSPIN_MOTOR_MODE);
-                break;
-                case MT_PAUSE_CMD:
-                	mt_pause = 1;
-                break;
-                case MT_RESTORE_CMD:
-                	mt_restore_proc(arg);
-                	mt_pause = 0;
-                break;
-                case MT_RESET_CMD:
-                    mt_angle = 0;
-                    mt_dir = 0;
-                    mt_timeout = 0;
-                    mt_pause = 0;
-                    mt_mode = MT_IDLE_MODE;
-                    mt_mode_backup = MT_IDLE_MODE;
-                    mt_plate_run = 0;
-                    mt_cal = 0;
-                break;
-                default:
-                break;
-            }
-        }
-    }
-//    ESP_LOGI(TAG, "%s -", __func__);
-    vTaskDelete(NULL);
-}
+	while(1)
+	{
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
+#if 0
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
+	wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
+	wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000);
+#endif
 
-void motor_task_init(void)
-{
-	ESP_LOGI(TAG, "%s", __func__);
-
-    motor_msg = xQueueCreate(10, sizeof(mt_message_t));
-    mt_mutex = xSemaphoreCreateMutex();
-    
-    xTaskCreate(motor_task, "motor_task", 2*2048, NULL, 10, NULL);
-    xTaskCreate(motor_process_task, "motor_process_task", 2*2048, NULL, 10, NULL);
+#if 0
+	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
+	wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000);
+	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+	wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000);
+#endif
+	return 0;
 }

@@ -6,8 +6,29 @@
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
    CONDITIONS OF ANY KIND, either express or implied.
 */
-#include "main.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_system.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "esp_ota_ops.h"
+#include "esp_http_client.h"
+#include "esp_https_ota.h"
+#include "protocol_examples_common.h"
+#include "string.h"
+#define CONFIG_EXAMPLE_USE_CERT_BUNDLE
+#ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
+#include "esp_crt_bundle.h"
+#endif
 
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "protocol_examples_common.h"
+#include <sys/socket.h>
+#if CONFIG_EXAMPLE_CONNECT_WIFI
+#include "esp_wifi.h"
+#endif
+#include "http_ota.h"
 TaskHandle_t xOTA_Handle = NULL;
 static uint8_t OTA_Enable = 0;
 #define HASH_LEN 32
@@ -69,7 +90,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 void simple_ota_example_task(void *pvParameter)
 {
     ESP_LOGI(TAG, "Starting OTA example task");
-//    uint8_t state = 2;
+    uint8_t state = 2;
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
     esp_netif_t *netif = get_example_netif_from_desc(bind_interface_name);
     if (netif == NULL) {
@@ -120,12 +141,8 @@ void simple_ota_example_task(void *pvParameter)
     esp_err_t ret = esp_https_ota(&ota_config);
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "OTA Succeed, Rebooting...");
-//        state = CHARGE_FW_SUCCESS;
-        //MQTT_Send(0,0,NULL,CHARGE_FW_UPDATE_STATE,&state,1);
     } else {
         ESP_LOGE(TAG, "Firmware upgrade failed");
-//        state = CHARGE_FW_FAIL;
-        //MQTT_Send(0,0,NULL,CHARGE_FW_UPDATE_STATE,&state,1);
         OTA_Enable = 0;
 //        led_bit_disable(OTA_START_BIT);
         vTaskDelete(xOTA_Handle);
@@ -190,7 +207,7 @@ void ota_main(const char* URL)
     esp_wifi_set_ps(WIFI_PS_NONE);
 #endif // CONFIG_EXAMPLE_CONNECT_WIFI
 
-//    TaskHandle_t xHandle = NULL;
+    TaskHandle_t xHandle = NULL;
     ESP_LOGI(TAG,"simple_ota_example_task task_start");
     if (xTaskCreatePinnedToCore(
             simple_ota_example_task,                  // 태스크 함수

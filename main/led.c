@@ -6,10 +6,15 @@ static const char *TAG = "LED";
 #define LED_STRIP_BLINK_GPIO  1// 제어에 사용할 GPIO 핀 번호
 #define LED_STRIP_MAX_LEDS    4    // 직렬 연결된 LED 개수
 
+#define LED_ANIMATION_STEP			(1)
+static int ani_color = 0;
+static int ani_dir = 0;
+
 static led_strip_handle_t led_strip;
 static SemaphoreHandle_t led_mutex;
 static QueueHandle_t led_cmd_msg = NULL;
-
+static int led_mode = LED_IDLE_MODE;
+static int64_t start_tm, end_tm, elapsed;
 
 void send_led_cmd_msg(void *message, uint32_t cmd)
 {
@@ -96,9 +101,6 @@ static int led_full_white(void)
 	return 0;
 }
 
-#define LED_ANIMATION_STEP		(1)
-static int ani_color = 0;
-static int ani_dir = 0;
 static int led_animation(int mode, int color)
 {
 	if(mode == 0)
@@ -139,7 +141,6 @@ static int led_full_off(void)
     return 0;
 }
 
-static int led_mode = LED_IDLE_MODE;
 static int set_led_opmode(int mode)
 {
     if (xSemaphoreTake(led_mutex, portMAX_DELAY) == pdTRUE) 
@@ -150,7 +151,6 @@ static int set_led_opmode(int mode)
     return 0;
 }
 
-static int64_t start_tm, end_tm, elapsed;
 void led_process_task(void *arg)
 {
 //	ESP_LOGI(TAG, "%s +", __func__);
@@ -453,7 +453,8 @@ void led_process_task(void *arg)
                 elapsed = (end_tm - start_tm) / 1000; 
                 if (elapsed >= 300) 
                 {
-                    led_full_off();
+//                    led_full_off();
+                    led_full_white();
                     set_led_opmode(LED_IDLE_MODE);
                 }
                 break;
@@ -573,7 +574,7 @@ void led_init(void)
     led_cmd_msg = xQueueCreate(10, sizeof(message_t));
     led_mutex = xSemaphoreCreateMutex();
 
-    xTaskCreate(led_task, "led_task", 2048, NULL, 10, NULL);
-    xTaskCreate(led_process_task, "led_process_task", 2048, NULL, 10, NULL);
+    xTaskCreate(led_task, "led_task", 3072, NULL, 10, NULL);
+    xTaskCreate(led_process_task, "led_process_task", 3072, NULL, 10, NULL);
 
 }

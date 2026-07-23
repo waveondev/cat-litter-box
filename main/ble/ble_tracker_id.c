@@ -1,5 +1,13 @@
-#include "main.h"
-
+#include "ble_tracker_id.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+// 특정 장치의 타이머 시작
+#include <string.h>
+#include "esp_log.h" // 👈 ESP_LOGE를 위해 추가
+#include "app_config_flash.h"
+#include "ble_task.h"
+#include "ble_parse.h"
 TaskHandle_t xTrackerCaptureHandle = NULL;
 static const char *TAG = __FILE__;
 void Tracker_Device_disable(int i);
@@ -200,7 +208,19 @@ void MotionSetTimer(bool status)
         Motion_Send_tick = 50;
     }
 }
-
+bool GetTracker_Id_active(void)
+{
+    for (int i = 0; i < TRACKER_DEVICE_MAX; i++) {
+        if(Tracker_Device[i] != NULL)
+        {
+            if(Tracker_Device[i]->Enable)
+            {
+                return true;
+            }
+        }
+    }   
+    return false;
+}
 /**
  * @brief 100ms 주기로 실행될 Tracker Capture 태스크 함수
  */
@@ -231,18 +251,19 @@ void vTrackerCaptureTask(void *pvParameters)
                 motion_msg_send(MOTION_START_REQUEST,1);
             }
         }
-#if 0
         for (int i = 0; i < TRACKER_DEVICE_MAX; i++) {
+#if 0
             if(Time_ratio_state() == SMART_RUN_STABLE)
             {      
                 Tracker_device_time_add(i);
             }
+#endif
             if(Tracker_Device[i] != NULL)
             {
                 if(Tracker_Device[i]->Enable)
                 {
                     Tracker_Device[i]->Disable_Time += 100;
-                    if(Tracker_Device[i]->Disable_Time >= 2000)
+                    if(Tracker_Device[i]->Disable_Time >= 5000)
                     {
                         Tracker_Device_disable(i);
                     }  
@@ -250,7 +271,7 @@ void vTrackerCaptureTask(void *pvParameters)
             }
 
         }   
-#endif
+
         
         // 💡 vTaskDelayUntil은 이전 깨어난 시간 기준으로 정확히 100ms 뒤에 깨어나도록 보장합니다.
         // (vTaskDelay보다 주기성을 유지하는 데 훨씬 유리합니다)

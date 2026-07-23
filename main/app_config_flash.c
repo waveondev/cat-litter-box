@@ -1,17 +1,25 @@
-#include "main.h"
+#include "app_config_flash.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
 
 static const char *TAG = __FILE__;
 
 app_config_t app_config = 
 {
-//    .op_mode = OP_MODE_NORMAL,
-    .pump_clean_duration = 180,
-    .filter_life_days = 200,
-    .splash_delta_g = 50,
+	.MIN_VALID_WASTE_RAW = 50, 	// unit : 0.1 g
+	.CLUMPING_WAIT_MIN = 10,	// unit : minute
+	.JAM_CURRENT_LIMIT = 1200,	// unit : mA
+	.CAT_ENTRY_MIN_WEIGHT = 500,// unit : g
+	.WASTE_TYPE_RATIO_TH = 20,	// unit : 0.1
+	.EFFECTIVE_DWELL_TIME = 5,	// unit : second
+
     .gate_way_rssi_th = -55,
     .hx1_scale = 1000.0f,
     .hx1_offset = 0,
-    .case_raw_data = 0,
     .tof_sense_threshold_l = 250,
     .tof_sense_threshold_r = 250,
     .motion_data_time = 1800,
@@ -32,7 +40,8 @@ app_ble_config_t ble_config =
 static bool app_save_flag = false;
 static bool wifi_save_flag = false;
 static bool ble_save_flag = false;
-
+static bool motor_save_flag = false;
+static uint32_t motor_save_time = 0;
 void app_nvs_save_set(void)
 {
     app_save_flag = true;
@@ -44,6 +53,10 @@ void wifi_nvs_save_set(void)
 void ble_nvs_save_set(void)
 {
     ble_save_flag = true;
+}
+void motor_nvs_save_set(void)
+{
+    motor_save_flag = true;
 }
 void reset_all_nvs_data(void)
 {
@@ -68,11 +81,13 @@ void dump_all_configurations(void)
 
     // 1. APP 설정 출력
     ESP_LOGI(TAG, "[APP CONFIG]");
-//    ESP_LOGI(TAG, "  - Operation Mode       : %ld", app_config.op_mode);
-    ESP_LOGI(TAG, "  - Pump Clean Duration  : %ld sec", app_config.pump_clean_duration);
-    ESP_LOGI(TAG, "  - Filter Life Days     : %ld days", app_config.filter_life_days);
-    ESP_LOGI(TAG, "  - Min Weight Threshold : %ld g", app_config.min_weight_threshold); // 구조체 멤버에 있으면 출력
-    ESP_LOGI(TAG, "  - Splash Delta         : %ld g", app_config.splash_delta_g);
+	ESP_LOGI(TAG, "  - MIN_VALID_WASTE_RAW  : %ld g", app_config.MIN_VALID_WASTE_RAW);
+    ESP_LOGI(TAG, "  - CLUMPING_WAIT_MIN    : %ld min", app_config.CLUMPING_WAIT_MIN);
+    ESP_LOGI(TAG, "  - JAM_CURRENT_LIMIT    : %ld mA", app_config.JAM_CURRENT_LIMIT);
+    ESP_LOGI(TAG, "  - CAT_ENTRY_MIN_WEIGHT : %ld g", app_config.CAT_ENTRY_MIN_WEIGHT);
+    ESP_LOGI(TAG, "  - WASTE_TYPE_RATIO_TH  : %ld ", app_config.WASTE_TYPE_RATIO_TH);
+    ESP_LOGI(TAG, "  - EFFECTIVE_DWELL_TIME : %ld sec", app_config.EFFECTIVE_DWELL_TIME);
+    
     ESP_LOGI(TAG, "  - Gateway RSSI Thr     : %ld dBm", app_config.gate_way_rssi_th);
     ESP_LOGI(TAG, "  - HX1 Scale Factor     : %.2f", app_config.hx1_scale);
     ESP_LOGI(TAG, "  - HX1 Tare Offset      : %ld", app_config.hx1_offset);
@@ -109,51 +124,68 @@ app_ble_config_t* get_ble_config(void)
 {
     return &ble_config;
 }
+uint32_t* get_motor_time(void)
+{
+    return &motor_save_time;
+}
+void erase_app_configuration(void)
+{
+    // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
+    memset(&app_config,0,sizeof(app_config));
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config));
+}
 
 void load_app_configuration(void)
 {
     // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_CONFIGURATION, &app_config, sizeof(app_config_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
     
     if (err != ESP_OK) {
         // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
-        ESP_LOGI(TAG,"[CONFIG] not saved data, create defualt values \r\n");
+        ESP_LOGI(TAG,"[CONFIG] 저장된 설정이 없어 기본값을 생성합니다.\r\n");
                 
         // 기본값 세팅 후 NVS에 최초로 구워두기
-        write_nvs_blob(APP_NAMESPACE, APP_CONFIGURATION, &app_config, sizeof(app_config_t));
+        write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
     } else {
-//        ESP_LOGI(TAG,"[CONFIG] NVS에서 시스템 설정 로드 성공! (opmode = %d 저울 Offset: %d)\r\n", 
-//                          app_config.op_mode, app_config.hx1_offset);
+        ESP_LOGI(TAG,"[CONFIG] NVS에서 시스템 설정 로드 성공!저울 Offset: %d)\r\n", 
+                          app_config.hx1_offset);
     }
 }
 
 // 값이 바뀔 때마다 호출해 줄 저장 함수
 static void save_app_configuration(void)
 {
-    write_nvs_blob(APP_NAMESPACE, APP_CONFIGURATION, &app_config, sizeof(app_config_t));
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
 // 2. 검증을 위해 NVS에서 데이터를 다시 읽어올 임시 그릇 생성
     app_config_t temp_cfg;
     memset(&temp_cfg, 0, sizeof(app_config_t)); // 0으로 깨끗하게 청소
 
     // 3. NVS에서 방금 저장한 값을 다시 로드(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_CONFIGURATION, &temp_cfg, sizeof(app_config_t));
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &temp_cfg, sizeof(app_config_t));
 
     if (err == ESP_OK) {
         // 4. memcmp로 원본(app_config)과 NVS에서 읽어온 값(temp_cfg)을 비교
         // 두 메모리 블록이 100% 일치하면 0을 리턴합니다.
         if (memcmp(&app_config, &temp_cfg, sizeof(app_config_t)) == 0) {
-            ESP_LOGI(TAG, "[CONFIG] NVS data verification OK! matched 100%%!");
-//            ESP_LOGI(TAG, "[CONFIG] 로드된 모드: %ld, 저울 Offset: %ld", 
-//                      temp_cfg.op_mode, temp_cfg.hx1_offset);
+            ESP_LOGI(TAG, "[CONFIG] NVS 데이터 검증 성공! 저장된 값이 원본과 100%% 일치합니다.");
+            ESP_LOGI(TAG, "[CONFIG] 로드된  저울 Offset: %ld", 
+                      temp_cfg.hx1_offset);
         } else {
             // 플래시 메모리 물리적 손상이나 섹터 오류 시 감지됨
-            ESP_LOGE(TAG, "[CONFIG] NVS data verification failed! mismatched!");
+            ESP_LOGE(TAG, "[CONFIG] ?? NVS 데이터 검증 실패! 저장된 값이 원본과 일치하지 않습니다!");
         }
     } else {
-        ESP_LOGE(TAG, "[CONFIG] error occured while reading data for verification (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "[CONFIG] 검증을 위해 데이터를 읽어오는 중 에러 발생 (%s)", esp_err_to_name(err));
     }
 }
 
+void erase_wifi_configuration(void)
+{
+    // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
+    memset(&wifi_config,0,sizeof(wifi_config));
+
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(wifi_config));
+}
 void load_wifi_configuration(void)
 {
     // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
@@ -161,12 +193,12 @@ void load_wifi_configuration(void)
     
     if (err != ESP_OK) {
         // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
-        ESP_LOGI(TAG,"[WIFI] no previous saved data, create a new default values.\r\n");
+        ESP_LOGI(TAG,"[WIFI] 저장된 설정이 없어 기본값을 생성합니다.\r\n");
                 
         // 기본값 세팅 후 NVS에 최초로 구워두기
         write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
     } else {
-        ESP_LOGI(TAG,"[WIFI] NVS system load success! (ssid = %s, pass = %s)\r\n", 
+        ESP_LOGI(TAG,"[WIFI] NVS에서 시스템 설정 로드 성공! (ssid = %s, pass = %s)\r\n", 
                           wifi_config.conn_ssid, wifi_config.conn_password);
     }
 }
@@ -186,18 +218,25 @@ static void save_wifi_configuration(void)
         // 4. memcmp로 원본(wifi_config)과 NVS에서 읽어온 값(temp_cfg)을 비교
         // 두 메모리 블록이 100% 일치하면 0을 리턴합니다.
         if (memcmp(&wifi_config, &temp_cfg, sizeof(app_wifi_config_t)) == 0) {
-            ESP_LOGI(TAG, "[WIFI] NVS data verification success! matched 100%% ");
-            ESP_LOGI(TAG, "[WIFI] loaded SSID: %s", temp_cfg.conn_ssid);
+            ESP_LOGI(TAG, "[WIFI] NVS 데이터 검증 성공! 저장된 값이 원본과 100%% 일치합니다.");
+            ESP_LOGI(TAG, "[WIFI] 로드된 SSID: %s", temp_cfg.conn_ssid);
         } else {
             // 플래시 메모리 섹터 불량이나 마스킹 오류 시 감지됨
-            ESP_LOGE(TAG, "[WIFI] NVS data verification failed, mismatched!");
+            ESP_LOGE(TAG, "[WIFI] ?? NVS 데이터 검증 실패! 저장된 값이 원본과 일치하지 않습니다!");
         }
     } else {
-        ESP_LOGE(TAG, "[WIFI] error occure while reading data for verification (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "[WIFI] 검증을 위해 데이터를 읽어오는 중 에러 발생 (%s)", esp_err_to_name(err));
     }
 }
 
 
+void erase_ble_configuration(void)
+{
+    // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
+    memset(&ble_config,0,sizeof(ble_config));
+
+    write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(ble_config));
+}
 void load_ble_configuration(void)
 {
     // 1. NVS에서 시스템 구조체 통째로 읽어오기 시도
@@ -205,13 +244,13 @@ void load_ble_configuration(void)
     
     if (err != ESP_OK) {
         // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
-        ESP_LOGI(TAG,"[BLE] no saved data, create default values \r\n");
+        ESP_LOGI(TAG,"[BLE] 저장된 설정이 없어 기본값을 생성합니다.\r\n");
                 
         // 기본값 세팅 후 NVS에 최초로 구워두기
         write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
     } else {
-        ESP_LOGI(TAG,"[BLE] NVS system setting loaded success! (ssid = %s, pass = %s)\r\n", 
-                          wifi_config.conn_ssid, wifi_config.conn_password);
+        ESP_LOGI(TAG,"[BLE] NVS에서 시스템 설정 로드 성공! (device name = %s)\r\n", 
+                          ble_config.ble_device_name);
     }
 }
 
@@ -230,16 +269,59 @@ static void save_ble_configuration(void)
         // 4. ?? memcmp로 원본(ble_config)과 읽어온 것(temp_cfg)을 크기만큼 비교
         // memcmp는 두 메모리가 완전히 일치하면 '0'을 반환합니다.
         if (memcmp(&ble_config, &temp_cfg, sizeof(app_ble_config_t)) == 0) {
-            ESP_LOGI(TAG, "[BLE] NVS data verification success! matched 100%%");
-            ESP_LOGI(TAG, "[BLE] loaded name: %s", temp_cfg.ble_device_name);
+            ESP_LOGI(TAG, "[BLE] NVS 데이터 검증 성공! 읽어온 값이 원본과 100%% 일치합니다.");
+            ESP_LOGI(TAG, "[BLE] 로드된 이름: %s", temp_cfg.ble_device_name);
         } else {
             // 메모리가 일치하지 않는 경우 (대개 이런 일은 거의 없지만, 플래시 불량 등의 이슈 체크용)
-            ESP_LOGE(TAG, "[BLE] NVS data verification failed, mismatched");
+            ESP_LOGE(TAG, "[BLE] ?? NVS 데이터 검증 실패! 저장된 값이 원본과 다릅니다!");
         }
     } else {
-        ESP_LOGE(TAG, "[BLE] error occur while reading data for verification (%s)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "[BLE] 검증을 위해 다시 읽어오는 과정에서 에러 발생 (%s)", esp_err_to_name(err));
     }
 }
+
+
+void load_motor_time(void)
+{
+    // 3. NVS에서 데이터를 다시 역으로 로드(Load)
+    esp_err_t err = read_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, &motor_save_time);
+
+    if (err != ESP_OK) {
+        // 2. 만약 최초 부팅이라 데이터가 없다면 기본값(Default) 세팅
+        ESP_LOGI(TAG,"[MOTOR] 저장된 설정이 없어 기본값을 생성합니다.\r\n");
+                
+        // 기본값 세팅 후 NVS에 최초로 구워두기
+        write_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, motor_save_time);
+    } else {
+        ESP_LOGI(TAG,"[MOTOR] NVS에서 시스템 설정 로드 성공! (motor_save_time = %d)\r\n", 
+                          motor_save_time);
+    }
+}
+static void save_motor_time(void)
+{
+    write_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, motor_save_time);
+// 2. 검증을 위해 NVS에서 방금 저장한 값을 다시 읽어올 임시 그릇 생성
+    uint32_t temp_cfg = 0xffffffff;
+
+    // 3. NVS에서 데이터를 다시 역으로 로드(Load)
+    esp_err_t err = read_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, &temp_cfg);
+
+    if (err == ESP_OK) {
+        // 4. ?? memcmp로 원본(ble_config)과 읽어온 것(temp_cfg)을 크기만큼 비교
+        // memcmp는 두 메모리가 완전히 일치하면 '0'을 반환합니다.
+        if (temp_cfg == motor_save_time) {
+            ESP_LOGI(TAG, "[BLE] NVS 데이터 검증 성공! 읽어온 값이 원본과 100%% 일치합니다.");
+            ESP_LOGI(TAG, "[BLE] 로드된 이름: %d", motor_save_time);
+        } else {
+            // 메모리가 일치하지 않는 경우 (대개 이런 일은 거의 없지만, 플래시 불량 등의 이슈 체크용)
+            ESP_LOGE(TAG, "[BLE] ?? NVS 데이터 검증 실패! 저장된 값이 원본과 다릅니다!");
+        }
+    } else {
+        ESP_LOGE(TAG, "[BLE] 검증을 위해 다시 읽어오는 과정에서 에러 발생 (%s)", esp_err_to_name(err));
+    }
+}
+
+
 #define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 3)
 
 static void flash_task(void *pvParameter)
@@ -262,6 +344,12 @@ static void flash_task(void *pvParameter)
             ble_save_flag = false;
             save_ble_configuration();
         }
+        if(motor_save_flag)
+        {
+            motor_save_flag = false;
+            save_motor_time();
+        }
+        
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
@@ -287,6 +375,11 @@ void NVS_Flash_init(void)
     load_app_configuration();
     load_wifi_configuration();
     load_ble_configuration();
+    load_motor_time();
     dump_all_configurations();
     
 }
+
+
+
+

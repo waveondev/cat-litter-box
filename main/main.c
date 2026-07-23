@@ -1,12 +1,5 @@
 #include "main.h"
 
-#include <stddef.h>
-#include <stdint.h>
-
-#include "ble_task.h"
-#include "wifi_task.h"
-#include "app_config_flash.h"
-
 static const char *TAG = "APP_MAIN";
 
 // «… ¡§¿« (ESP32-S3 «œµÂø˛æÓø° ∏¬∞‘ ºˆ¡§ ∞°¥…)
@@ -66,22 +59,22 @@ int RingBuffer_Pop(unsigned char *data) {
 static void Usage(void)
 {
 	ESP_LOGI(TAG, "%s", __func__);
-	ESP_LOGI(TAG, "A : PLATE_FORWARD_CMD ");
-	ESP_LOGI(TAG, "B : PLATE_REVERSE_CMD ");
-	ESP_LOGI(TAG, "C : PLATE_STOP_CMD ");
-	ESP_LOGI(TAG, "D : SCP_INOUT_FORWARD_CMD ");
-	ESP_LOGI(TAG, "E : SCP_INOUT_REVERSE_CMD ");
-	ESP_LOGI(TAG, "F : SCP_INOUT_STOP_CMD ");
-	ESP_LOGI(TAG, "G : WASTE_FORWARD_CMD ");
-	ESP_LOGI(TAG, "H : WASTE_REVERSE_CMD ");
-	ESP_LOGI(TAG, "I : WASTE_STOP_CMD ");
+	ESP_LOGI(TAG, "A : PLATE_CMD FORWARD ");
+	ESP_LOGI(TAG, "B : PLATE_CMD REVERSE ");
+	ESP_LOGI(TAG, "C : PLATE_CMD STOP ");
+	ESP_LOGI(TAG, "D : SCP_INOUT_CMD FORWARD");
+	ESP_LOGI(TAG, "E : SCP_INOUT_CMD REVERSE");
+	ESP_LOGI(TAG, "F : SCP_INOUT_CMD STOP");
+	ESP_LOGI(TAG, "G : WASTE_COVER_CMD FORWARD");
+	ESP_LOGI(TAG, "H : WASTE_COVER_CMD REVERSE");
+	ESP_LOGI(TAG, "I : WASTE_COVER_CMD STOP");
 	ESP_LOGI(TAG, "J : ALL DEMO1 SYNARIO ");
-	ESP_LOGI(TAG, "K : SCP_SPIN_FORWARD_CMD");
-	ESP_LOGI(TAG, "L : SCP_SPIN_REVERSE_CMD");
-	ESP_LOGI(TAG, "M : SCP_SPIN_STOP_CMD");
-	ESP_LOGI(TAG, "N : MAIN_FORWARD_CMD");
-	ESP_LOGI(TAG, "O : MAIN_REVERSE_CMD");
-	ESP_LOGI(TAG, "P : MAIN_STOP_CMD");
+	ESP_LOGI(TAG, "K : SCP_SPIN_CMD FORWARD");
+	ESP_LOGI(TAG, "L : SCP_SPIN_CMD REVERSE");
+	ESP_LOGI(TAG, "M : SCP_SPIN_CMD STOP");
+	ESP_LOGI(TAG, "N : MAIN_COVER_CMD FORWARD");
+	ESP_LOGI(TAG, "O : MAIN_COVER_CMD REVERSE");
+	ESP_LOGI(TAG, "P : MAIN_COVER_CMD STOP");
 	ESP_LOGI(TAG, "Enter : ");
 }
 
@@ -100,7 +93,19 @@ static void demo_synario(void *arg) {
 	    vTaskDelay(pdMS_TO_TICKS(5000));
    }
 #endif
-	scp_spin_cal(arg);
+
+#ifdef FEATURE_MOTOR_CAL_TEST
+	motor_calibration(arg);
+#endif
+
+#ifdef FEATURE_CLEAN_TEST
+    loadcell_init();	// tare zero 
+//	do_clean(arg);
+#endif
+
+#ifdef FEATURE_PT_TEST
+	pt_test(arg);
+#endif
 
     ESP_LOGI(TAG, "%s -", __func__);
     vTaskDelete(NULL);
@@ -113,47 +118,47 @@ static void Process_Command(message_t *mtmsg, char *cmd)
     if (strncmp(cmd, (char *)A_FUNCTION, strlen((char *)A_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)A_FUNCTION);
-    	send_dc_motor_msg(&msg, PLATE_FORWARD_CMD);
+    	send_plate_msg(&msg, PLATE_CMD, 0, FORWARD, 0);
     } 
     else if (strncmp(cmd, (char *)B_FUNCTION, strlen((char *)B_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)B_FUNCTION);
-    	send_dc_motor_msg(&msg, PLATE_REVERSE_CMD);
+    	send_plate_msg(&msg, PLATE_CMD, 0, REVERSE, 0);
     } 
     else if (strncmp(cmd, (char *)C_FUNCTION, strlen((char *)C_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)C_FUNCTION);
-    	send_dc_motor_msg(&msg, PLATE_STOP_CMD);
+    	send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
     } 
     else if (strncmp(cmd, (char *)D_FUNCTION, strlen((char *)D_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)D_FUNCTION);
-    	send_dc_motor_msg(&msg, SCP_INOUT_FORWARD_CMD);
+    	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
     } 
     else if (strncmp(cmd, (char *)E_FUNCTION, strlen((char *)E_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)E_FUNCTION);
-    	send_dc_motor_msg(&msg, SCP_INOUT_REVERSE_CMD);
+    	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
     } 
     else if (strncmp(cmd, (char *)F_FUNCTION, strlen((char *)F_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)F_FUNCTION);
-    	send_dc_motor_msg(&msg, SCP_INOUT_STOP_CMD);
+    	send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
     } 
     else if (strncmp(cmd, (char *)G_FUNCTION, strlen((char *)G_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)G_FUNCTION);
-    	send_step_motor_msg(&msg, WASTE_FORWARD_CMD);
+    	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
     } 
     else if (strncmp(cmd, (char *)H_FUNCTION, strlen((char *)H_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)H_FUNCTION);
-    	send_step_motor_msg(&msg, WASTE_REVERSE_CMD);
+    	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
     } 
     else if (strncmp(cmd, (char *)I_FUNCTION, strlen((char *)I_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)I_FUNCTION);
-    	send_step_motor_msg(&msg, WASTE_STOP_CMD);
+    	send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
     }
     else if (strncmp(cmd, (char *)J_FUNCTION, strlen((char *)J_FUNCTION)) == 0) 
     {
@@ -163,35 +168,33 @@ static void Process_Command(message_t *mtmsg, char *cmd)
     else if (strncmp(cmd, (char *)K_FUNCTION, strlen((char *)K_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)K_FUNCTION);
-    	msg.angle = 90;
-    	send_step_motor_msg(&msg, SCP_SPIN_FORWARD_CMD);
+    	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 120, FORWARD, 15000);
     }
     else if (strncmp(cmd, (char *)L_FUNCTION, strlen((char *)L_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)L_FUNCTION);
-    	msg.angle = 90;
-    	send_step_motor_msg(&msg, SCP_SPIN_REVERSE_CMD);
+    	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 120, REVERSE, 15000);
     }
     else if (strncmp(cmd, (char *)M_FUNCTION, strlen((char *)M_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)M_FUNCTION);
     	msg.angle = 0;
-    	send_step_motor_msg(&msg, SCP_SPIN_STOP_CMD);
+    	send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 0, STOP, 0);
     }
     else if (strncmp(cmd, (char *)N_FUNCTION, strlen((char *)N_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)N_FUNCTION);
-    	send_step_motor_msg(&msg, MAIN_FORWARD_CMD);
+    	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, FORWARD, 5000);
     }
     else if (strncmp(cmd, (char *)O_FUNCTION, strlen((char *)O_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)O_FUNCTION);
-    	send_step_motor_msg(&msg, MAIN_REVERSE_CMD);
+    	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, REVERSE, 5000);
     }
     else if (strncmp(cmd, (char *)P_FUNCTION, strlen((char *)P_FUNCTION)) == 0) 
     {
     	ESP_LOGI(TAG, "%s", (char *)P_FUNCTION);
-    	send_step_motor_msg(&msg, MAIN_STOP_CMD);
+    	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
     }
     else 
     {
@@ -284,7 +287,6 @@ void uart1_to_uart0_task(void *arg) {
 				memcpy((void *)(buf+idx), (void *)data, len);
 			}
             idx+=len;
-            
 			ret = sensor_data_parser(buf);
 			if(ret > 0)
 			{
@@ -339,6 +341,24 @@ void uart0_to_uart1_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+//[by.jeon] ÌïòÎìúÎîîÏä§ÌÅ¨(SPIFFS) ÏÑ§Ï†ï Î∞è Ï¥àÍ∏∞Ìôî Ìï®Ïàò
+static esp_vfs_spiffs_conf_t spiffs_conf = {
+  .base_path = "/spiffs",
+  .partition_label = "spiffs_storage",
+  .max_files = 5,
+  .format_if_mount_failed = true
+};
+
+static void filesystem_init(void)
+{
+    ESP_LOGI("SPIFFS", "Initializing SPIFFS");
+    esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE("SPIFFS", "Failed to mount or format filesystem");
+        return;
+    }
+    ESP_LOGI("SPIFFS", "SPIFFS mounted successfully");
+}
 
 void app_main(void) {
 
@@ -350,9 +370,14 @@ void app_main(void) {
     }
     
     NVS_Flash_init();
+    
+#ifdef FEATURE_WAVEON_COMMON
+    // [by.jeon] Í∞ÄÏÉÅ ÌïòÎìúÎîîÏä§ÌÅ¨(SPIFFS) ÏºúÍ∏∞! (Ïù∏Ï¶ùÏÑúÎ•º ÏùΩÍ∏∞ ÏúÑÌï¥ ÌïÑÏàò)
+    filesystem_init();
+#endif
 
     uart_bridge_init();
-    xTaskCreate(uart1_to_uart0_task, "u1_to_u0", 3072, NULL, 10, NULL);
+    xTaskCreate(uart1_to_uart0_task, "u1_to_u0", 3072, NULL, 5, NULL);
     xTaskCreate(uart0_to_uart1_task, "u0_to_u1", 3072, NULL, 10, NULL);
     
 	ESP_LOGI(TAG, "%s Rev_%d:%d_%d_%d-%s/%s ", FW_PRJ_NAME, FW_HW_REV, FW_VER_MAJOR, FW_VER_MINOR, FW_VER_PATCH, FW_VER_TIME, FW_VER_DATE);
@@ -363,26 +388,41 @@ void app_main(void) {
     ESP_LOGI(TAG, "Application Version: Factory_v1.0.0");
     ESP_LOGI(TAG, "===============================================");
 
-	dc_motor_init();
-    step_motor_init();
-    motor_task_init();
-	keyscan_init();
+#ifdef FEATURE_SENSOR_INPUT
+	vTaskDelay(pdMS_TO_TICKS(100));
+    sensor_init();
+    loadcell_init();
+#endif
 	uv_led_init();
 	led_init();
+	dc_motor_init();
+#ifndef FEATURE_MAIN_COVER_DC_MOTOR	
+    step_motor_init();
+#endif
+    current_monitor_init();
 	ui_init();
+	keyscan_init();
+	
+#ifdef FEATURE_WAVEON_COMMON
+    Create_Tracker_Capture_Task();
+    ble_task_init();
+#endif
 #ifdef FEATURE_WIFI_RSSI_TEST
 	wifi_test_init();
-#endif
-#ifdef ENABLE_SENSOR_INPUT
-	sensor_init();
-	loadcell_init();
-#endif
-    ble_task_init();
+#else
+#ifdef FEATURE_WAVEON_COMMON
 	wifi_init();
-
-    aws_iot_task_init();
-
+#endif
+#endif
 	Usage();
+	
+#ifdef FEATURE_INITIAL_CAL
+    motor_calibration(NULL);
+#endif
+
+#ifdef FEATURE_WAVEON_COMMON
+	aws_iot_task_init();
+#endif
 
 	while(1)
 	{

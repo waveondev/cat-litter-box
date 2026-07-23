@@ -144,4 +144,3 @@ void keyscan_init(void)
     init_key_gpio();
     xTaskCreate(key_polling_task, "key_polling_task", 3072, NULL, 5, NULL);
 }
-

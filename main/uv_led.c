@@ -1,7 +1,7 @@
 #include "main.h"
 
 static const char *TAG = "UV_LED";
-
+static bool ev_led_enable = false;
 #define GPIO_UV_LED   	48
 
 static void uv_led_gpio_init(void)
@@ -32,22 +32,55 @@ int uv_led_enable(int enable)
 	return 0;
 }
 
-#if 0
 void uv_led_task(void *arg)
 {
+	int pt;
 	ESP_LOGI(TAG, "%s +", __func__);
 
     while (1) {
-
-        // 10ms 마다 핀 상태를 검사 (샘플링 주기)
-        vTaskDelay(pdMS_TO_TICKS(10));
+        pt = get_pt_status();
+		if(!(pt&PT_BIT_REED_SW) && (pt&PT_BIT_WASTE_CLOSE))
+		{
+			if(!ev_led_enable)
+			{
+                ESP_LOGI(TAG, "UV LED ENABLED");
+				uv_led_enable(1);
+				ev_led_enable = true;
+			}
+		}
+		else
+		{
+			if(ev_led_enable)
+			{
+                ESP_LOGI(TAG, "UV LED DISABLED");
+				uv_led_enable(0);
+				ev_led_enable = false;
+			}
+		}
+			
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
-#endif 
 
 void uv_led_init(void)
 {
+	int pt;
 	ESP_LOGI(TAG, "%s", __func__);
+	
 	uv_led_gpio_init();
-//    xTaskCreate(uv_led_task, "uv_led_task", 2048, NULL, 10, NULL);
+    pt = get_pt_status();
+    if(!(pt&PT_BIT_REED_SW) && (pt&PT_BIT_WASTE_CLOSE))
+    {
+        ESP_LOGI(TAG, "UV LED ENABLED");
+		uv_led_enable(1);
+		ev_led_enable = true;
+    }
+    else
+    {
+        ESP_LOGI(TAG, "UV LED DISABLED");
+		uv_led_enable(0);
+        ev_led_enable = false;
+	}
+    xTaskCreate(uv_led_task, "uv_led_task", 2048, NULL, 10, NULL);
+    
 }

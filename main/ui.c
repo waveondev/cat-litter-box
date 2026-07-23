@@ -2,14 +2,14 @@
 
 static const char *TAG = "UI";
 
-static int clean_task_run = 0;
-static int manage_finish_task_run = 0;
-static int manage_start_task_run = 0;
-static int pairing_task_run = 0;
-static int factory_task_run = 0;
-static int tare_task_run = 0;
-static int ui_mt_pause_f = 0;
-static int ui_manage_f = 0;
+static bool clean_task_run = false;
+static bool manage_finish_task_run = false;
+static bool manage_start_task_run = false;
+static bool pairing_task_run = false;
+static bool factory_task_run = false;
+static bool tare_task_run = false;
+//static bool ui_mt_pause_f = false;
+static bool ui_manage_f = false;
 
 static QueueHandle_t ui_cmd_msg = NULL;
 
@@ -28,221 +28,14 @@ void send_ui_cmd_msg(void *message, uint32_t cmd)
     }
 }
 
-static int wait_motor_operation(void)
-{
-	int ret = 0;
-    do{
-        vTaskDelay(pdMS_TO_TICKS(10));
-        ret = check_motor();
-        if(ret == 1)
-        {
-            continue;
-        }
-        else if(ret == 0)
-        {
-            break;
-        }
-        else if(ret < 0)
-        {
-            ESP_LOGI(TAG, "Motor operation timeout error !!");
-            break;
-        }
-    } while(1);
-	return ret;
-}
-
-int scp_spin_cal(void *arg)
-{
-	int pt, ret;
-    mt_message_t msg = {0};
-    msg.task_id = (uint32_t)arg;
-    send_motor_msg(&msg, MT_RESET_CMD); // reset 
-#if 0
-    ESP_LOGI(TAG, "main cover open ");
-    msg.angle = 0;  // none
-    msg.direction = 0;// forward
-    msg.timeout = 10000; // 10 sec
-    send_motor_msg(&msg, MT_MAIN_CMD);
-    wait_motor_operation();
-#endif
-    ESP_LOGI(TAG, "scoop out ");
-    msg.angle = 0;  // none
-    msg.direction = 0;// forward
-    msg.timeout = 10000; // 10 sec
-    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-    wait_motor_operation();
-
-    ESP_LOGI(TAG, "scoop spin reverse 360 degree for cal");
-    msg.angle = 360;    
-    msg.direction = 0;// forward
-    msg.timeout = 60000; // 60 sec, take a guess
-	msg.cal = 1;
-    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-    do{
-        vTaskDelay(pdMS_TO_TICKS(10));
-        pt = get_pt_status();
-		if((pt&PT_BIT_SCP_SPIN_ST) && (pt&PT_BIT_SCP_SPIN_ED))
-		{
-			// check origin angle
-			ESP_LOGI(TAG, "check origin angle");
-			send_motor_msg(&msg, MT_PAUSE_CMD);
-			break;
-		}
-        ret = check_motor();
-        if(ret == 1)
-        {
-            continue;
-        }
-        else if(ret == 0)
-        {
-            break;
-        }
-        else if(ret < 0)
-        {
-        	// timeout
-            ESP_LOGI(TAG, "Error : not found origin ");
-            return -3;
-        }
-    } while(1);
-	msg.cal = 0;
-    return 0;
-}
-
 void ui_clean_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	clean_task_run = 1;
-//	while(1)
-	{
-	    mt_message_t msg = {0};
-	    message_t led_msg;
-	    msg.task_id = (uint32_t)arg;
-	    led_msg.task_id = (uint32_t)arg;
 
-        send_led_cmd_msg(&led_msg, LED_CLEANING_CMD);
+	clean_task_run = true;
+	do_clean(arg);
+	clean_task_run = false;
 
-	    send_motor_msg(&msg, MT_RESET_CMD); // reset 
-
-        ESP_LOGI(TAG, "Main plate run ");
-        msg.angle = 0;	// none
-        msg.direction = 0;// forward
-        msg.timeout = 0;	// no timeout
-	    send_motor_msg(&msg, MT_PLATE_CMD);
-#if 0
-        ESP_LOGI(TAG, "main cover open ");
-        msg.angle = 0;	// none
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_MAIN_CMD);
-	    wait_motor_operation();
-#endif
-
-        ESP_LOGI(TAG, "scoop spin 150 degree ");
-        msg.angle = 150;
-        msg.direction = 0;// forward
-        msg.timeout = 15000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop out ");
-        msg.angle = 0;	// none
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop spin forward 80 degree ");
-        msg.angle = 80;
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-	    wait_motor_operation();
-
-//        ESP_LOGI(TAG, "wait run plate .... ");
-        vTaskDelay(pdMS_TO_TICKS(10000));	// wait 30 sec, until one turn finished
-//        send_motor_msg(&msg, MT_PLATE_STOP_CMD); // stop plate
-
-        ESP_LOGI(TAG, "scoop spin reverse 80 degree");
-        msg.angle = 80;	
-        msg.direction = 1;// reverse
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "waste cover open");
-        msg.angle = 0;	// none
-        msg.direction = 0;// forward
-        msg.timeout = 15000; // 10 sec
-	    send_motor_msg(&msg, MT_WASTE_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop in");
-        msg.angle = 0;	
-        msg.direction = 1;// reverse
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-	    wait_motor_operation();
-	    
-        ESP_LOGI(TAG, "scoop spin reverse 150 degree");
-        msg.angle = 150;	
-        msg.direction = 1;// reverse
-        msg.timeout = 15000; // 15 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-	    wait_motor_operation();
-
-//        vTaskDelay(pdMS_TO_TICKS(1000));	// wait 1 sec
-
-        ESP_LOGI(TAG, "scoop spin forward 150 degree");
-        msg.angle = 150;	
-        msg.direction = 0;// forward
-        msg.timeout = 15000; // 15 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop out");
-        msg.angle = 0;	
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "waste cover close");
-        msg.angle = 0;	// none
-        msg.direction = 1;// reverse
-        msg.timeout = 15000; // 10 sec
-	    send_motor_msg(&msg, MT_WASTE_CMD);
-	    wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop in");
-        msg.angle = 0;	
-        msg.direction = 1;// reverse
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-        wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop spin reverse 150 degree ");
-        msg.angle = 150;	
-        msg.direction = 1;// reverse
-        msg.timeout = 15000; // 15 sec
-	    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-        wait_motor_operation();
-        
-#if 0
-        ESP_LOGI(TAG, "main cover close");
-        msg.angle = 0;	// none
-        msg.direction = 1;// reverse
-        msg.timeout = 10000; // 10 sec
-	    send_motor_msg(&msg, MT_MAIN_CMD);
-        wait_motor_operation();
-#endif
-
-		send_motor_msg(&msg, MT_PLATE_STOP_CMD); // stop plate
-
-		send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
-
-		vTaskDelay(pdMS_TO_TICKS(10));
-	}
-	clean_task_run = 0;
 	ESP_LOGI(TAG, "%s -", __func__);
 	vTaskDelete(NULL);
 }
@@ -250,100 +43,48 @@ void ui_clean_task(void *arg)
 void ui_manage_finish_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	manage_finish_task_run = 1;
+	manage_finish_task_run = true;
 
-    mt_message_t msg = {0};
     message_t led_msg;
-    msg.task_id = (uint32_t)arg;
     led_msg.task_id = (uint32_t)arg;
+	send_led_cmd_msg(&led_msg, LED_MANAGE_CMD);
+	do_manage_finish(arg);
+	loadcell_init();	// tare zero 
+	send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
+	
+    ui_manage_f = false;
 
-    send_led_cmd_msg(&led_msg, LED_MANAGE_CMD);
-
-    ESP_LOGI(TAG, "scoop in");
-    msg.angle = 0;  
-    msg.direction = 1;// reverse
-    msg.timeout = 10000; // 10 sec
-    send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-    wait_motor_operation();
-
-    ESP_LOGI(TAG, "scoop spin reverse 150 degree ");
-    msg.angle = 150;    
-    msg.direction = 1;// reverse
-    msg.timeout = 15000; // 15 sec
-    send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-    wait_motor_operation();
-    
-    send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
-    
-#if 0
-    ESP_LOGI(TAG, "main cover close");
-    msg.angle = 0;  // none
-    msg.direction = 1;// reverse
-    msg.timeout = 10000; // 10 sec
-    send_motor_msg(&msg, MT_MAIN_CMD);
-    wait_motor_operation();
-#endif
-   	loadcell_init();	// tare zero 
-	manage_finish_task_run = 0;
+	manage_finish_task_run = false;
 	vTaskDelete(NULL);
 }
 void ui_manage_start_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	manage_start_task_run = 1;
-//  while(1)
-    {
-        mt_message_t msg = {0};
-        message_t led_msg;
-        msg.task_id = (uint32_t)arg;
-        led_msg.task_id = (uint32_t)arg;
+	manage_start_task_run = true;
 
-        send_led_cmd_msg(&led_msg, LED_MANAGE_CMD);
-
-        send_motor_msg(&msg, MT_RESET_CMD); // reset 
-
-#if 0
-        ESP_LOGI(TAG, "main cover open ");
-        msg.angle = 0;  // none
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-        send_motor_msg(&msg, MT_MAIN_CMD);
-        wait_motor_operation();
-#endif
-
-        ESP_LOGI(TAG, "scoop spin 150 degree ");
-        msg.angle = 150;
-        msg.direction = 0;// forward
-        msg.timeout = 15000; // 10 sec
-        send_motor_msg(&msg, MT_SCP_SPIN_CMD);
-        wait_motor_operation();
-
-        ESP_LOGI(TAG, "scoop out ");
-        msg.angle = 0;  // none
-        msg.direction = 0;// forward
-        msg.timeout = 10000; // 10 sec
-        send_motor_msg(&msg, MT_SCP_INOUT_CMD);
-        wait_motor_operation();
-
-        send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
-    }
-	manage_start_task_run = 0;
+    message_t led_msg;
+    led_msg.task_id = (uint32_t)arg;
+    send_led_cmd_msg(&led_msg, LED_MANAGE_CMD);
+	do_manage_start(arg);
+    send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
+    
+	manage_start_task_run = false;
 	vTaskDelete(NULL);
 }
 void ui_tarezero_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	tare_task_run = 1;
+	tare_task_run = true;
     loadcell_init();	// tare zero 
 	vTaskDelay(pdMS_TO_TICKS(1000));
 	
-	tare_task_run = 0;
+	tare_task_run = false;
 	vTaskDelete(NULL);
 }
 void ui_pairing_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	pairing_task_run = 1;
+	pairing_task_run = true;
     message_t led_msg;
     led_msg.task_id = (uint32_t)arg;
     
@@ -353,21 +94,25 @@ void ui_pairing_task(void *arg)
 
 	send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
 	
-	pairing_task_run = 0;
+	pairing_task_run = false;
 	vTaskDelete(NULL);
 }
 void ui_factory_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
-	factory_task_run = 1;
-	while(1)
-	{
-		vTaskDelay(pdMS_TO_TICKS(10));
-	}
-	factory_task_run = 0;
+	factory_task_run = true;
+
+    message_t led_msg;
+    led_msg.task_id = (uint32_t)arg;
+    send_led_cmd_msg(&led_msg, LED_QCMODE_CMD);
+	
+	vTaskDelay(pdMS_TO_TICKS(5000));
+	
+    send_led_cmd_msg(&led_msg, LED_QCQUIT_CMD);
+	
+	factory_task_run = false;
 	vTaskDelete(NULL);
 }
-
 
 void ui_task(void *arg)
 {
@@ -390,19 +135,6 @@ void ui_task(void *arg)
                 	{
 						xTaskCreate(ui_clean_task, "ui_clean_task", 4096, NULL, 10, NULL);
                 	}
-                	else
-                	{
-                		if(!ui_mt_pause_f)
-                		{
-							send_motor_msg(&msg, MT_PAUSE_CMD);
-							ui_mt_pause_f = 1;
-						}
-						else
-						{
-                            send_motor_msg(&msg, MT_RESTORE_CMD);
-                            ui_mt_pause_f = 0;
-						}
-                	}
 					break;
 				case UI_MANAGE_FINISH_CMD:
                 	ESP_LOGI(TAG, "UI_MANAGE_FINISH_CMD");
@@ -411,7 +143,6 @@ void ui_task(void *arg)
                 		if(ui_manage_f)
                 		{
 							xTaskCreate(ui_manage_finish_task, "ui_manage_finish_task", 4096, NULL, 10, NULL);
-							ui_manage_f = 0;
 						}
                 	}
 					break;
@@ -429,7 +160,7 @@ void ui_task(void *arg)
                 		if(!ui_manage_f)
                 		{
 							xTaskCreate(ui_manage_start_task, "ui_manage_start_task", 4096, NULL, 10, NULL);
-                            ui_manage_f = 1;
+                            ui_manage_f = true;
 						}
                 	}
 					break;

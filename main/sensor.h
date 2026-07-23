@@ -17,6 +17,9 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 
+int set_sensor_enable(bool enable);
+bool get_sensor_enable(void);
+
 int set_pt_status(int value);
 int get_pt_status(void);
 
