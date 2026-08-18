@@ -318,7 +318,7 @@ static void save_motor_time(void)
 }
 
 
-#define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 3)
+#define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
 
 static void flash_task(void *pvParameter)
 {
