@@ -187,11 +187,12 @@ void ui_task(void *arg)
     }
 }
 
+#define UI_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
 void ui_init(void)
 {
 	ESP_LOGI(TAG, "%s", __func__);	
 	ui_cmd_msg = xQueueCreate(10, sizeof(message_t));
-    xTaskCreate(ui_task, "ui_task", 2*4096, NULL, 10, NULL);
+    xTaskCreate(ui_task, "ui_task", UI_TASK_STACK_SIZE, NULL, 10, NULL);
 
     // idle led display
     message_t msg;

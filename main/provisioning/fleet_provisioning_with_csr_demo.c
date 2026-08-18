@@ -81,6 +81,7 @@
 #include "esp_mac.h"
 #include "rx_mqtt.h"
 #include "aws_iot_task.h"
+#include "device_config.h"
 /**
  * These configurations are required. Throw compilation error if it is not
  * defined.
@@ -185,8 +186,7 @@ static size_t thingNameLength;
  * APIs. When the MQTT publish callback receives an expected Fleet Provisioning
  * accepted payload, it copies it into this buffer.
  */
-//static uint8_t payloadBuffer[ NETWORK_BUFFER_SIZE ];
-static uint8_t payloadBuffer[ 8192 ];
+static uint8_t payloadBuffer[ CONFIG_MQTT_NETWORK_BUFFER_SIZE ];
 
 /**
  * @brief Length of the payload stored in #payloadBuffer. This is set by the
@@ -592,21 +592,30 @@ static bool unsubscribeFromRegisterThingResponseTopics( void )
 #include "topic_list.h"
 
 
+
 int aws_iot_provisioning_main( int argc,
           char ** argv )
 {
     bool status = false;
     /* Buffer for holding the CSR. */
-    char csr[ CSR_BUFFER_LENGTH ] = { 0 };
+    char* csr = (char*)calloc(1, CSR_BUFFER_LENGTH);
+    //char csr[ CSR_BUFFER_LENGTH ] = { 0 };
+
     size_t csrLength = 0;
     /* Buffer for holding received certificate until it is saved. */
-    char certificate[ CERT_BUFFER_LENGTH ];
+
+    //char certificate[ CERT_BUFFER_LENGTH ];
+    char* certificate = (char*)calloc(1, CERT_BUFFER_LENGTH);
+
     size_t certificateLength;
     /* Buffer for holding the certificate ID. */
     char certificateId[ CERT_ID_BUFFER_LENGTH ];
     size_t certificateIdLength;
     /* Buffer for holding the certificate ownership token. */
-    char ownershipToken[ OWNERSHIP_TOKEN_BUFFER_LENGTH ];
+    //char ownershipToken[ OWNERSHIP_TOKEN_BUFFER_LENGTH ];
+
+    char* ownershipToken = (char*)calloc(1, OWNERSHIP_TOKEN_BUFFER_LENGTH);
+
     size_t ownershipTokenLength;
     bool connectionEstablished = false;
     CK_SESSION_HANDLE p11Session;
@@ -690,20 +699,10 @@ int aws_iot_provisioning_main( int argc,
 
             connectionEstablished = true;
 
-                                           
-            // if( status == true )
-            // {
-            //     LogInfo( ( "Establishing MQTT session with claim certificate..." ) );
-            //     status = EstablishMqttSession( provisioningPublishCallback, p11Session, pkcs11configLABEL_CLAIM_CERTIFICATE, pkcs11configLABEL_CLAIM_PRIVATE_KEY );
-            //     if( status == true ) connectionEstablished = true;
-
-            //     connectionEstablished = true;
-            // }
-
             /**** Call the CreateCertificateFromCsr API ****/
             if( status == true ) status = subscribeToCsrResponseTopics();
             if( status == true ) status = generateKeyAndCsr( p11Session, pkcs11configLABEL_DEVICE_PRIVATE_KEY_FOR_TLS, pkcs11configLABEL_DEVICE_PUBLIC_KEY_FOR_TLS, csr, CSR_BUFFER_LENGTH, &csrLength );
-            if( status == true ) status = generateCsrRequest( payloadBuffer, NETWORK_BUFFER_SIZE, csr, csrLength, &payloadLength );
+            if( status == true ) status = generateCsrRequest( payloadBuffer, CONFIG_MQTT_NETWORK_BUFFER_SIZE, csr, csrLength, &payloadLength );
             if( status == true ) status = PublishToTopic( FP_CBOR_CREATE_CERT_PUBLISH_TOPIC, FP_CBOR_CREATE_CERT_PUBLISH_LENGTH, ( char * ) payloadBuffer, payloadLength );
             if( status == true ) status = waitForResponse();
             if( status == true ) {
@@ -715,9 +714,9 @@ int aws_iot_provisioning_main( int argc,
 
             /**** Call the RegisterThing API ****/
             char str[100];
-            snprintf(str,sizeof(str),"C100_%s",dynamicMacStr);
+            snprintf(str,sizeof(str),"%s_%s",CONFIG_DEVICE_PREFIX,dynamicMacStr);
 
-            if( status == true ) status = generateRegisterThingRequest( payloadBuffer, NETWORK_BUFFER_SIZE, ownershipToken, ownershipTokenLength, str, strlen(str), &payloadLength );
+            if( status == true ) status = generateRegisterThingRequest( payloadBuffer, CONFIG_MQTT_NETWORK_BUFFER_SIZE, ownershipToken, ownershipTokenLength, str, strlen(str), &payloadLength );
             if( status == true ) status = subscribeToRegisterThingResponseTopics();
             if( status == true ) status = PublishToTopic( FP_CBOR_REGISTER_PUBLISH_TOPIC( PROVISIONING_TEMPLATE_NAME ), FP_CBOR_REGISTER_PUBLISH_LENGTH( PROVISIONING_TEMPLATE_NAME_LENGTH ), ( char * ) payloadBuffer, payloadLength );
             if( status == true ) status = waitForResponse();
@@ -734,66 +733,50 @@ int aws_iot_provisioning_main( int argc,
                 DisconnectMqttSession();
                 connectionEstablished = false;
             }
-
-            /* 🚨 [NVS 핵심] 모든 프로비저닝이 완벽히 끝나면 NVS에 등록 성공(true)을 영구 기록합니다. */
             if ( status == true )
             {
-                write_nvs_registration_flag( true );
-                LogInfo( ( "기기 등록 성공! 다음 부팅부터는 이 과정을 건너뜁니다." ) );
-
-                /* ========================================================== */
-                /* [해결책] 새 인증서로 재접속하기 전에 AWS 동기화 시간을 벌어줍니다. */
-                /* ========================================================== */
-                LogInfo( ( "AWS 측 인증서 활성화 및 동기화를 위해 3초 대기합니다..." ) );
-                LogInfo( ( "재접속 직전 힙 메모리 여유: %u bytes", esp_get_free_heap_size() ) );
-                
                 vTaskDelay(pdMS_TO_TICKS(3000)); /* 3초 대기 */
-            }
-        }
 
-    
-
-        /**** Connect to AWS IoT Core with provisioned certificate ************/
-
-        if( status == true )
-        {
-            LogInfo( ( "Establishing MQTT session with provisioned certificate..." ) );
-            status = EstablishMqttSession( provisioningPublishCallback,
-                                           p11Session,
-                                           pkcs11configLABEL_DEVICE_CERTIFICATE_FOR_TLS,
-                                           pkcs11configLABEL_DEVICE_PRIVATE_KEY_FOR_TLS );
-
-            if( status != true )
-            {
-                LogError( ( "Failed to establish MQTT session with provisioned "
-                            "credentials. Verify on your AWS account that the "
-                            "new certificate is active and has an attached IoT "
-                            "Policy that allows the \"iot:Connect\" action." ) );
-            }
-            else
-            {
-                LogInfo( ( "Sucessfully established connection with provisioned credentials." ) );
-                connectionEstablished = true;
-
-                mqtt_subscribe_init();
-                bool is_already_registered = read_nvs_registration_flag();
-
-                if (is_already_registered == false)
+                LogInfo( ( "Establishing MQTT session with provisioned certificate..." ) );
+                status = EstablishMqttSession( provisioningPublishCallback,
+                                            p11Session,
+                                            pkcs11configLABEL_DEVICE_CERTIFICATE_FOR_TLS,
+                                            pkcs11configLABEL_DEVICE_PRIVATE_KEY_FOR_TLS );
+                /* 🚨 [NVS 핵심] 모든 프로비저닝이 완벽히 끝나면 NVS에 등록 성공(true)을 영구 기록합니다. */
+                if( status != true )
                 {
-                    LogInfo( ( "[최초 연결 완료] 백엔드에 기기 등록(REGISTRATION) 요청을 큐에 주입합니다." ) );
-                    mqtt_queue_send(MESSEGE_REGISTRATION);
-                    
-                    // 💡 팁: 백엔드에서 등록 완료 응답(Callback)을 성공적으로 수신하는 시점 
-                    //        또는 이 패킷이 완전히 날아간 직후에 write_nvs_registration_flag(true);를 해주면 완벽합니다.
-                }
+                    LogError( ( "Failed to establish MQTT session with provisioned "
+                                "credentials. Verify on your AWS account that the "
+                                "new certificate is active and has an attached IoT "
+                                "Policy that allows the \"iot:Connect\" action." ) );
+                }            
                 else
                 {
-                    LogInfo( ( "[재부팅 연결 완료] 백엔드에 부트(BOOT) 알림을 큐에 주입합니다." ) );
-                    mqtt_queue_send(MESSEGE_BOOT);
+
+
+                    LogInfo( ( "Sucessfully established connection with provisioned credentials." ) );
+                    connectionEstablished = true;
+                    if (is_already_registered == false)
+                    {
+                        LogInfo( ( "[최초 연결 완료] 백엔드에 기기 등록(REGISTRATION) 요청을 큐에 주입합니다." ) );
+                        mqtt_queue_send(MESSEGE_REGISTRATION);
+                    }
+                    else
+                    {
+                        LogInfo( ( "[재부팅 연결 완료] 백엔드에 부트(BOOT) 알림을 큐에 주입합니다." ) );
+                        mqtt_queue_send(MESSEGE_BOOT);
+                    }
+                    mqtt_subscribe_init();
+                    pkcs11CloseSession( p11Session );
+                    free(csr);
+                    free(certificate);
+                    free(ownershipToken);                    
+                    return EXIT_SUCCESS;
                 }
-                return EXIT_SUCCESS;
             }
+
         }
+
 
         /**** Finish **********************************************************/
 
@@ -834,7 +817,9 @@ int aws_iot_provisioning_main( int argc,
     {
         LogInfo( ( "Demo completed successfully." ) );
     }
-
+    free(csr);
+    free(certificate);
+    free(ownershipToken);
     return ( status == true ) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 /*-----------------------------------------------------------*/

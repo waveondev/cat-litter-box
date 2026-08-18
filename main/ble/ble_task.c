@@ -683,6 +683,7 @@ void motion_msg_send(uint8_t cmd,uint8_t sub_cmd)
     // 설정값이 0보다 클 때만 타이머 실행 (안전성 강화)
 }
 #include "esp_bt.h" // 필요한 헤더 포함
+#define BLE_TRX_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
 void ble_task_init(void)
 {
     esp_err_t ret;
@@ -732,7 +733,7 @@ void ble_task_init(void)
     if (xTaskCreatePinnedToCore(
             ble_rx_processing_task,                  // 태스크 함수
             "ble_rx_task",                // 태스크 이름
-            4096,       // 스택 크기
+            BLE_TRX_TASK_STACK_SIZE,       // 스택 크기
             NULL,        // 파라미터
             tskIDLE_PRIORITY + 3,      // 우선순위
             NULL,                  // 태스크 핸들
@@ -744,7 +745,7 @@ void ble_task_init(void)
     if (xTaskCreatePinnedToCore(
             ble_tx_processing_task,                  // 태스크 함수
             "ble_tx_task",                // 태스크 이름
-            4096,       // 스택 크기
+            BLE_TRX_TASK_STACK_SIZE,       // 스택 크기
             NULL,        // 파라미터
             tskIDLE_PRIORITY + 3,      // 우선순위
             NULL,                  // 태스크 핸들

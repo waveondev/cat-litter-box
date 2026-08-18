@@ -472,7 +472,7 @@ void BLE_Receive_data(uint8_t* mac, uint8_t* data, uint16_t len)
             printf("data6: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_6.bit.type, Motion_Packet->motion_data.pack_data_6.bit.data, Motion_Packet->motion_data.pack_data_6.word);
             printf("data7: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_7.bit.type, Motion_Packet->motion_data.pack_data_7.bit.data, Motion_Packet->motion_data.pack_data_7.word);
             printf("data8: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_8.bit.type, Motion_Packet->motion_data.pack_data_8.bit.data, Motion_Packet->motion_data.pack_data_8.word);
-            tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY,mac, Motion_Packet);
+            //tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY,mac, Motion_Packet);
             if(input_count == total_count)
             {
                 motion_msg_send(MOTION_DATA_ACK,Motion_Packet->motion_data.seq);
@@ -511,7 +511,7 @@ void BLE_Receive_data(uint8_t* mac, uint8_t* data, uint16_t len)
                 printf("  |- Reset Reason: %u\n", Motion_Packet->health_data_res.fault_flag.bit.reset_reason);
                 
                 printf("\n=====================================================\n\n");
-                tracker_mqtt_queue_send(TRACKER_MESSEGE_HEALTH,mac, Motion_Packet);
+                //tracker_mqtt_queue_send(TRACKER_MESSEGE_HEALTH,mac, Motion_Packet);
         break;
         default:
             BLE_APP_Command(data,len);

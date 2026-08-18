@@ -23,6 +23,8 @@ static const char *TAG = "APP_MAIN";
 #define O_FUNCTION 		"o"
 #define P_FUNCTION 		"p"
 #define Q_FUNCTION 		"q"
+#define R_FUNCTION 		"r"
+#define S_FUNCTION 		"s"
 
 #define RX_BUF_SIZE 		(256)
 #define PARSE_BUF_SIZE 		(128)
@@ -114,6 +116,59 @@ static void demo_synario(void *arg) {
     vTaskDelete(NULL);
 }
 
+static void vTaskListCustom(void)
+{
+    // 1. ÇöÀç ½Ã½ºÅÛÀÇ ÃÑ ÅÂ½ºÅ© °³¼ö È®ÀÎ
+    UBaseType_t uxArraySize = uxTaskGetNumberOfTasks();
+    
+    // ±¸Á¶Ã¼ ¹è¿­ µ¿Àû ÇÒ´ç
+    TaskStatus_t *pxTaskStatusArray = (TaskStatus_t *)malloc(uxArraySize * sizeof(TaskStatus_t));
+
+    if (pxTaskStatusArray != NULL) {
+        // 2. ¸ðµç ÅÂ½ºÅ©ÀÇ ½Ã½ºÅÛ »óÅÂ Á¤º¸ °¡Á®¿À±â
+        uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
+
+        // Çì´õ Ãâ·Â (¿äÃ»ÇÏ½Å ¾ç½Ä ¿À¸¥ÂÊ¿¡ Core Ãß°¡)
+        printf("\nTask            State  Priority  Stack    #    Core\n");
+        printf("====================================================\n");
+
+        for (UBaseType_t x = 0; x < uxArraySize; x++) {
+            // »óÅÂ(State) ¹®ÀÚ º¯È¯
+            char state_char = '?';
+            switch (pxTaskStatusArray[x].eCurrentState) {
+                case eRunning:   state_char = 'R'; break;
+                case eReady:     state_char = 'Y'; break;
+                case eBlocked:   state_char = 'B'; break;
+                case eSuspended: state_char = 'S'; break;
+                case eDeleted:   state_char = 'D'; break;
+                default: break;
+            }
+
+            // Core ID ¹®ÀÚ¿­ º¯È¯ (°íÁ¤ ¾È µÊ = Any, °íÁ¤µÊ = Core 0 ¶Ç´Â 1)
+            char core_str[32]; // 32¹ÙÀÌÆ®·Î ³Ë³ËÇÏ°Ô º¯°æ
+
+			if (pxTaskStatusArray[x].xCoreID == tskNO_AFFINITY) {
+				snprintf(core_str, sizeof(core_str), "Any (0/1)");
+			} else {
+				// ÀÌÁ¦ ÄÄÆÄÀÏ·¯°¡ 32¹ÙÀÌÆ® °ø°£À» º¸°í ¾È½ÉÇÏ°í Åë°ú½ÃÅµ´Ï´Ù.
+				snprintf(core_str, sizeof(core_str), "Core %d", (int)pxTaskStatusArray[x].xCoreID);
+			}
+
+            // ±âÁ¸ vTaskList¿Í ¿ÏÀüÈ÷ µ¿ÀÏÇÑ ³Êºñ¿Í Á¤·ÄÀ» À¯ÁöÇÏ¸ç Ãâ·Â
+            printf("%-15s  %c       %u         %-7u  %-3u  %s\n",
+                   pxTaskStatusArray[x].pcTaskName,
+                   state_char,
+                   (unsigned int)pxTaskStatusArray[x].uxCurrentPriority,
+                   (unsigned int)pxTaskStatusArray[x].usStackHighWaterMark,
+                   (unsigned int)pxTaskStatusArray[x].xTaskNumber,
+                   core_str);
+        }
+        printf("====================================================\n\n");
+
+        // ¸Þ¸ð¸® ÇØÁ¦
+        free(pxTaskStatusArray);
+    }
+}
 static void Process_Command(message_t *mtmsg, char *cmd) 
 {
 	mt_message_t msg = {0};
@@ -210,6 +265,16 @@ static void Process_Command(message_t *mtmsg, char *cmd)
 	    nvs_flash_init();
 		system_reset(REASON_FACTORY_RESTORE);
 #endif
+    }
+    else if (strncmp(cmd, (char *)R_FUNCTION, strlen((char *)R_FUNCTION)) == 0) 
+    {
+    	ESP_LOGI(TAG, "%s", (char *)R_FUNCTION);
+    	ESP_LOGI(TAG , "Current free heap %d bytes, minimum ever free heap %d bytes\r\n", ( int ) xPortGetFreeHeapSize(), ( int ) xPortGetMinimumEverFreeHeapSize() );
+    }
+    else if (strncmp(cmd, (char *)S_FUNCTION, strlen((char *)S_FUNCTION)) == 0) 
+    {
+    	ESP_LOGI(TAG, "%s", (char *)S_FUNCTION);
+    	vTaskListCustom();
     }
     else 
     {
@@ -451,7 +516,6 @@ static void filesystem_init(void)
 #endif
 
 #define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 3)
-
 void app_main(void) {
 
     get_freeheap_size((int)__LINE__);
@@ -468,7 +532,7 @@ void app_main(void) {
     get_freeheap_size((int)__LINE__);
     
 #ifdef FEATURE_AWS_IOT
-    // [by.jeon] ê°€???˜ë“œ?”ìŠ¤??SPIFFS) ì¼œê¸°! (?¸ì¦?œë? ?½ê¸° ?„í•´ ?„ìˆ˜)
+    // [by.jeon] °¡??? µå? ½º??SPIFFS) ÄÑ±â! (? Áõ?  ? ? ±â ? ÇØ ? ¼ö)
     filesystem_init();
 #endif
     get_freeheap_size((int)__LINE__);
@@ -493,30 +557,29 @@ void app_main(void) {
     Create_Tracker_Capture_Task();
     ble_task_init();
     wifi_init();
-	aws_iot_task_init();
-    while(1)
-    {
-        get_freeheap_size((int)__LINE__);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        if(get_aws_started())
-        {
-        	ESP_LOGI(TAG, "provisioning finished !!");
-			break;
-        }
-    }   
-#endif
+   // console_task_init();
 
+#endif
+    get_freeheap_size((int)__LINE__);
 	// cat-litter box only Modules
 	uv_led_init();
+        get_freeheap_size((int)__LINE__);
 	led_init();
+        get_freeheap_size((int)__LINE__);
 #ifdef FEATURE_SENSOR_INPUT
     sensor_init();
+        get_freeheap_size((int)__LINE__);
     loadcell_init();
+        get_freeheap_size((int)__LINE__);
 #endif
 	dc_motor_init();
+        get_freeheap_size((int)__LINE__);
     step_motor_init();
+        get_freeheap_size((int)__LINE__);
     current_monitor_init();
+        get_freeheap_size((int)__LINE__);
 	ui_init();
+        get_freeheap_size((int)__LINE__);
 	keyscan_init();
     get_freeheap_size((int)__LINE__);
 	Usage();
@@ -524,7 +587,17 @@ void app_main(void) {
 #ifdef FEATURE_INITIAL_CAL
     motor_calibration(NULL);
 #endif
-
+	aws_iot_task_init();
+    while(1)
+    {
+       // get_freeheap_size((int)__LINE__);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if(get_aws_started())
+        {
+        	ESP_LOGI(TAG, "provisioning finished !!");
+			break;
+        }
+    }   
 	while(1)
 	{
         get_freeheap_size((int)__LINE__);

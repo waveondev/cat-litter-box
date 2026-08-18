@@ -23,102 +23,174 @@ static esp_timer_handle_t Health_timer;
 
 extern int aws_iot_provisioning_main( int argc, char ** argv );
 // 15분 = 15분 * 60초 * 1,000,000us
-#define TIMER_15_MIN_IN_US   (15ULL * 60ULL * 1000000ULL)
+
+#define TIMER_1_MIN_IN_US    (60ULL * 1000000ULL)
+#define TIMER_15_MIN_IN_US   (15ULL * TIMER_1_MIN_IN_US)
 
 static void Health_timer_callback(void* arg)
 {
     mqtt_queue_send(MESSEGE_HEALTH);
+    //mqtt_queue_send(AWS_MESSEGE_AWS_JOBS_GET);
+
+    
+    if (esp_timer_is_active(Health_timer)) {
+        esp_timer_stop(Health_timer);
+    } 
+
+    esp_timer_start_once(Health_timer, TIMER_15_MIN_IN_US);
+
 }
 
-void mqtt_queue_send(messege_tx_mqtt_cmd_e cmd)
+bool mqtt_queue_send(messege_tx_mqtt_cmd_e cmd)
 {
+    if(mqtt_tx_queue == NULL)
+    {
+        ESP_LOGW("mqtt_tx", "mqtt_tx_queue NULL.");
+        return false;        
+    }
+    ESP_LOGW("mqtt_tx", "mqtt_tx_queue send.");
     if (xQueueSend(mqtt_tx_queue, &cmd, 0) != pdPASS) {
         ESP_LOGW("mqtt_tx", "Queue full! Dropping packet and freeing memory.");
+        return false;
     }
+    return true;
 }
-
-void tracker_mqtt_queue_send(messege_tx_mqtt_cmd_e cmd, uint8_t* mac, Motion_Packet_t* packet)
+void tracker_mqtt_queue_send(messege_tx_mqtt_cmd_e cmd, uint8_t* mac, Motion_Packet_t* packet,uint32_t data_len,  pack_data* data )
 {
     tracker_mqtt_packet_t mqtt_packet;
+
+    if(tracker_mqtt_queue == NULL)
+    {
+        ESP_LOGW("mqtt_tx", "tracker_mqtt_queue NULL.");
+        if(data != NULL)
+            free(data);
+        return;        
+    }
+
+
     memset(&mqtt_packet,0,sizeof(tracker_mqtt_packet_t));
     mqtt_packet.cmd = cmd;
     memcpy(mqtt_packet.mac,mac,sizeof(mqtt_packet.mac));
     memcpy(&mqtt_packet.packet,packet,sizeof(Motion_Packet_t));
-
+    mqtt_packet.data_len = data_len;
+    mqtt_packet.data = data;
+    ESP_LOGW("mqtt_tx", "tracker_mqtt_queue send.");
     if (xQueueSend(tracker_mqtt_queue, &mqtt_packet, 0) != pdPASS) {
         ESP_LOGW("mqtt_tx", "Queue full! Dropping packet and freeing memory.");
     }
 }
 
 
-
 static void aws_iot_main_entry(void *pvParameters)
 {
-    ESP_LOGI(TAG, "AWS IoT 전담 태스크가 시작!");
-
-    // -------------------------------------------------------------------------
-    // Wi-Fi가 연결되어 IP를 받아올 때까지 이 태스크를 완전히 중지(Block)시킴.
-    // -------------------------------------------------------------------------
-    
+     ESP_LOGI(TAG, "AWS IoT 전담 태스크 시작");
+    // Wi-Fi 연결 대기 (IP 할당 확인)
     xEventGroupWaitBits(
-        s_wifi_event_group,   // wifi_task.c가 관리하는 이벤트 그룹
-        WIFI_CONNECTED_BIT,   // IP 할당 완료 비트
-        pdFALSE,              // 비트를 자동으로 지우지 않음 (연결 유지 확인용)
-        pdTRUE,               // 설정한 모든 비트가 켜질 때까지 대기
-        portMAX_DELAY         // ⏳ 연결될 때까지 무한정 대기 (인터넷 안 되면 여기서 대기)
+        s_wifi_event_group,
+        WIFI_CONNECTED_BIT,
+        pdFALSE,
+        pdTRUE,
+        portMAX_DELAY
     );
+    // -------------------------------------------------------------
+    // 1. [1회성 초기화] 큐 및 타이머 생성을 루프 밖에서 단 1번만 수행
+    // -------------------------------------------------------------
+    mqtt_tx_queue = xQueueCreate(10, sizeof(messege_tx_mqtt_cmd_e));
+    tracker_mqtt_queue = xQueueCreate(10, sizeof(tracker_mqtt_packet_t));
 
-    ESP_LOGI(TAG, "인터넷 연결 확인됨! AWS Fleet Provisioning 프로세스를 시작합니다.");
+    const esp_timer_create_args_t Health_timer_args = {
+        .callback = &Health_timer_callback,
+        .name = "Health_timer"
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&Health_timer_args, &Health_timer));
 
-    aws_iot_provisioning_main(0, NULL);
-    is_aws_started = true;
-
-    ESP_LOGI(TAG,"=== 2. MQTT 루프를 시작합니다 ===");
-
+    int provisioning_count = 0;
     messege_tx_mqtt_cmd_e cmd;
     tracker_mqtt_packet_t mqtt_packet;
-    for(;;) {
-        if (xQueueReceive(mqtt_tx_queue, &cmd, pdMS_TO_TICKS(50)) == pdTRUE) {
-            Send_cJSON_Messege(cmd);
+
+    // -------------------------------------------------------------
+    // 2. [메인 재연결 루프]
+    // -------------------------------------------------------------
+    while(1)
+    {
+        // Wi-Fi 연결 대기 (IP 할당 확인)
+        xEventGroupWaitBits(
+            s_wifi_event_group,
+            WIFI_CONNECTED_BIT,
+            pdFALSE,
+            pdTRUE,
+            portMAX_DELAY
+        );
+
+
+        xQueueReset(mqtt_tx_queue);
+        xQueueReset(tracker_mqtt_queue);
+
+        // AWS IoT 프로비저닝 및 MQTT 연결
+        while(aws_iot_provisioning_main(0, NULL) != EXIT_SUCCESS)
+        {
+            vTaskDelay(pdMS_TO_TICKS(3000)); /* 3초 대기 */
+            provisioning_count++;
+            ESP_LOGI(TAG, "provisioning retry count = %d", provisioning_count);
+            if(provisioning_count > 10)
+                esp_restart();
         }
-        if (xQueueReceive(tracker_mqtt_queue, &mqtt_packet, pdMS_TO_TICKS(50)) == pdTRUE) {
-            Send_cJSON_Messege_for_tracker(&mqtt_packet);
+
+
+        // 2) MQTT 연결이 붙었으니 헬스 타이머 동작 시작!
+        esp_timer_start_once(Health_timer, TIMER_1_MIN_IN_US);
+
+        ESP_LOGI(TAG, "=== MQTT 송수신 메인 루프 진입 ===");
+
+        // MQTT 송수신 메인 루프
+        for(;;) {
+            if (xQueueReceive(mqtt_tx_queue, &cmd, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Send_cJSON_Messege(cmd);
+            }
+            if (xQueueReceive(tracker_mqtt_queue, &mqtt_packet, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Send_cJSON_Messege_for_tracker(&mqtt_packet);
+            // ⭕ 훌륭함: 메시지 전송 처리 완료 후 동적 메모리 안전하게 해제
+                if (mqtt_packet.data != NULL) {
+                    free(mqtt_packet.data);
+                    mqtt_packet.data = NULL; // Dangling Pointer 방지를 위해 NULL 처리 권장
+                }
+            }
+
+            /* 수신 및 네트워크 연결 감시 */
+            if (ProcessLoopWithTimeout(10) == false) {
+                ESP_LOGE(TAG, "MQTT 연결 끊김 감지!");
+                break; // for 루프 탈출
+            }
         }
-        /* 백그라운드에서 지속적으로 수신 버퍼를 감시하며 콜백 함수를 유도합니다 */
-        ProcessLoopWithTimeout(50); 
+
+        // =========================================================
+        // 🔴 [연결 끊김 시점]
+        // =========================================================
+        // 1) 네트워크가 끊겼으므로 헬스 타이머 즉시 정지!
+        esp_timer_stop(Health_timer);
+
+        // 2) 죽은 TLS/소켓 세션 정리
+        DisconnectMqttSession();
+        vTaskDelay(10000);
     }
 
-    vTaskDelete(NULL); // 만약 루프를 빠져나간다면 태스크 종료
+    vTaskDelete(NULL);
 }
 
 bool get_aws_started(void)
 {
 	return is_aws_started;
 }
-
+#define AWS_IOT_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 4)
 void aws_iot_task_init(void)
 {
-    mqtt_tx_queue = xQueueCreate(10, sizeof(messege_tx_mqtt_cmd_e));
-    tracker_mqtt_queue = xQueueCreate(10, sizeof(tracker_mqtt_packet_t));
-
 
     if (is_aws_started == false) {
-
-
-        const esp_timer_create_args_t Health_timer_args = {
-            .callback = &Health_timer_callback,
-            .name = "Health_timer"
-        };
-
-        // 타이머 생성
-        ESP_ERROR_CHECK(esp_timer_create(&Health_timer_args, &Health_timer));
-
-        ESP_ERROR_CHECK(esp_timer_start_periodic(Health_timer, TIMER_15_MIN_IN_US));
 
         if (xTaskCreatePinnedToCore(
             aws_iot_main_entry,                  // 태스크 함수
             "aws_iot_task",                // 태스크 이름
-            24576,       // 스택 크기
+            AWS_IOT_TASK_STACK_SIZE,       // 스택 크기
             NULL,        // 파라미터
             tskIDLE_PRIORITY + 5,      // 우선순위
             NULL,                  // 태스크 핸들
@@ -129,7 +201,6 @@ void aws_iot_task_init(void)
 
 
         //xTaskCreate(aws_iot_main_entry, "aws_iot_task", 24576, NULL, 5, NULL);
-//        is_aws_started = true;
+        is_aws_started = true;
     }
-
 }
