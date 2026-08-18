@@ -838,7 +838,7 @@ bool EstablishMqttSession( MQTTPublishCallback_t publishCallback,
                  * the MQTT broker. In a production device the identifier can be something
                  * unique, such as a device serial number. */
                 char con_info_str[100];
-                snprintf(con_info_str,sizeof(con_info_str),"W100_%s",dynamicMacStr);       
+                snprintf(con_info_str,sizeof(con_info_str),"C100_%s",dynamicMacStr);       
                 
                 connectInfo.pClientIdentifier = con_info_str;
                 connectInfo.clientIdentifierLength = strlen(con_info_str);

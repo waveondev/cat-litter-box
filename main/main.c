@@ -22,10 +22,13 @@ static const char *TAG = "APP_MAIN";
 #define N_FUNCTION 		"n"
 #define O_FUNCTION 		"o"
 #define P_FUNCTION 		"p"
+#define Q_FUNCTION 		"q"
 
 #define RX_BUF_SIZE 		(256)
 #define PARSE_BUF_SIZE 		(128)
 #define UART_MAX_TIMEOUT 	(10)
+
+//static unsigned int reset_reason = 0;
 
 // ring buffer
 typedef struct {
@@ -196,6 +199,18 @@ static void Process_Command(message_t *mtmsg, char *cmd)
     	ESP_LOGI(TAG, "%s", (char *)P_FUNCTION);
     	send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
     }
+    else if (strncmp(cmd, (char *)Q_FUNCTION, strlen((char *)Q_FUNCTION)) == 0) 
+    {
+    	ESP_LOGI(TAG, "%s", (char *)Q_FUNCTION);
+#if 0
+		message_t msg;
+		send_ui_cmd_msg(&msg, UI_FACTORY_CMD);
+#else
+	    ESP_ERROR_CHECK(nvs_flash_erase());
+	    nvs_flash_init();
+		system_reset(REASON_FACTORY_RESTORE);
+#endif
+    }
     else 
     {
     	ESP_LOGI(TAG, "%s : Unknown command !!", __func__);
@@ -341,7 +356,81 @@ void uart0_to_uart1_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-//[by.jeon] 하드디스크(SPIFFS) 설정 및 초기화 함수
+void check_boot_mode(void)
+{
+	int mode;
+    app_config_t *app = get_app_config();
+    mode = app->reset_reason;
+
+    ESP_LOGI(TAG, "%s RESET reason %d ", __func__, app->reset_reason);
+
+//	reset_reason |= 1<<mode;
+
+	if(mode != REASON_NORMAL)
+	{
+		// reset reason clear
+		app->reset_reason = REASON_NORMAL;
+        app_nvs_save_set();
+//        vTaskDelay(pdMS_TO_TICKS(500)); // wait to save data
+	}
+}
+
+void system_reset(int reason)
+{
+	ESP_LOGI(TAG, ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> %s reason %d ", __func__, reason);
+	message_t msg;
+	app_config_t *app = get_app_config();
+	app->reset_reason = reason;
+
+	if(reason == REASON_DIAG)
+	{
+        app_nvs_save_set();
+        send_led_cmd_msg(&msg, LED_QCQUIT_CMD);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+	}
+	else if(reason == REASON_OTA)
+	{
+        app_nvs_save_set();
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+	}
+	else if(reason == REASON_FACTORY_RESTORE)
+	{
+		app->MIN_VALID_WASTE_RAW = 50,   // unit : 0.1 g
+		app->CLUMPING_WAIT_MIN = 10, // unit : minute
+		app->JAM_CURRENT_LIMIT = 1200,   // unit : mA
+		app->CAT_ENTRY_MIN_WEIGHT = 500,// unit : g
+		app->WASTE_TYPE_RATIO_TH = 20,   // unit : 0.1g
+		app->EFFECTIVE_DWELL_TIME = 5,   // unit : second
+		app->gate_way_rssi_th = -55,
+		app->tof_sense_threshold_l = 250,
+		app->tof_sense_threshold_r = 250,
+		app->motion_data_time = 1800,
+		app_nvs_save_set();
+		vTaskDelay(pdMS_TO_TICKS(2000));
+	}
+	else
+	{
+        app_nvs_save_set();
+		vTaskDelay(pdMS_TO_TICKS(500)); // wait to save data
+	}
+	esp_restart();
+	while(1)
+	{
+	    vTaskDelay(pdMS_TO_TICKS(500));
+	}
+}
+
+unsigned int get_freeheap_size(int line)
+{
+//	UBaseType_t remaining_stack = uxTaskGetStackHighWaterMark(NULL); 
+	printf(">>  %d free heap %d bytes, min ever free %d bytes\r\n"
+			, line
+			, (int)xPortGetFreeHeapSize()
+			, (int)xPortGetMinimumEverFreeHeapSize());
+	return 0;
+}
+
+#ifdef FEATURE_AWS_IOT
 static esp_vfs_spiffs_conf_t spiffs_conf = {
   .base_path = "/spiffs",
   .partition_label = "spiffs_storage",
@@ -359,8 +448,13 @@ static void filesystem_init(void)
     }
     ESP_LOGI("SPIFFS", "SPIFFS mounted successfully");
 }
+#endif
+
+#define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 3)
 
 void app_main(void) {
+
+    get_freeheap_size((int)__LINE__);
 
     esp_err_t ret;
     ret = nvs_flash_init();
@@ -370,63 +464,70 @@ void app_main(void) {
     }
     
     NVS_Flash_init();
+	check_boot_mode();
+    get_freeheap_size((int)__LINE__);
     
-#ifdef FEATURE_WAVEON_COMMON
-    // [by.jeon] 가상 하드디스크(SPIFFS) 켜기! (인증서를 읽기 위해 필수)
+#ifdef FEATURE_AWS_IOT
+    // [by.jeon] 가???�드?�스??SPIFFS) 켜기! (?�증?��? ?�기 ?�해 ?�수)
     filesystem_init();
 #endif
+    get_freeheap_size((int)__LINE__);
 
+	vTaskDelay(pdMS_TO_TICKS(100));
     uart_bridge_init();
     xTaskCreate(uart1_to_uart0_task, "u1_to_u0", 3072, NULL, 5, NULL);
     xTaskCreate(uart0_to_uart1_task, "u0_to_u1", 3072, NULL, 10, NULL);
+	vTaskDelay(pdMS_TO_TICKS(100));
+	
+    get_freeheap_size((int)__LINE__);
     
 	ESP_LOGI(TAG, "%s Rev_%d:%d_%d_%d-%s/%s ", FW_PRJ_NAME, FW_HW_REV, FW_VER_MAJOR, FW_VER_MINOR, FW_VER_PATCH, FW_VER_TIME, FW_VER_DATE);
 
     const esp_partition_t *running_part = esp_ota_get_running_partition();
     ESP_LOGI(TAG, "===============================================");
-    ESP_LOGI(TAG, "Current Running Partition: %s", running_part->label);
-    ESP_LOGI(TAG, "Application Version: Factory_v1.0.0");
+    ESP_LOGI(TAG, "Current Running Partition: %s FLASH_TASK_STACK_SIZE %d", running_part->label, FLASH_TASK_STACK_SIZE);
     ESP_LOGI(TAG, "===============================================");
 
+	// aws iot + wifi + BLE Moudles
+#ifdef FEATURE_AWS_IOT
+    Create_Tracker_Capture_Task();
+    ble_task_init();
+    wifi_init();
+	aws_iot_task_init();
+    while(1)
+    {
+        get_freeheap_size((int)__LINE__);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if(get_aws_started())
+        {
+        	ESP_LOGI(TAG, "provisioning finished !!");
+			break;
+        }
+    }   
+#endif
+
+	// cat-litter box only Modules
+	uv_led_init();
+	led_init();
 #ifdef FEATURE_SENSOR_INPUT
-	vTaskDelay(pdMS_TO_TICKS(100));
     sensor_init();
     loadcell_init();
 #endif
-	uv_led_init();
-	led_init();
 	dc_motor_init();
-#ifndef FEATURE_MAIN_COVER_DC_MOTOR	
     step_motor_init();
-#endif
     current_monitor_init();
 	ui_init();
 	keyscan_init();
-	
-#ifdef FEATURE_WAVEON_COMMON
-    Create_Tracker_Capture_Task();
-    ble_task_init();
-#endif
-#ifdef FEATURE_WIFI_RSSI_TEST
-	wifi_test_init();
-#else
-#ifdef FEATURE_WAVEON_COMMON
-	wifi_init();
-#endif
-#endif
+    get_freeheap_size((int)__LINE__);
 	Usage();
 	
 #ifdef FEATURE_INITIAL_CAL
     motor_calibration(NULL);
 #endif
 
-#ifdef FEATURE_WAVEON_COMMON
-	aws_iot_task_init();
-#endif
-
 	while(1)
 	{
-		// idle
+        get_freeheap_size((int)__LINE__);
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}	
 }

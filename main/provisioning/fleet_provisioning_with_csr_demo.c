@@ -352,7 +352,7 @@ static void provisioningPublishCallback( MQTTPublishInfo_t * pPublishInfo,
 
                                 char payload_buf[128];
                                 // 앱 규격: {"thing_name": "W100_AABBCCDDEEFF"}[cite: 7, 9, 14]
-                                snprintf(payload_buf, sizeof(payload_buf), "{\"thing_name\":\"W100_%s\"}", dynamicMacStr);
+                                snprintf(payload_buf, sizeof(payload_buf), "{\"thing_name\":\"C100_%s\"}", dynamicMacStr);
 
                                 // 3. 앱에 암호화된 최종 완료 통보 쏘기
                                 ble_send_encrypted_event("prov_complete", payload_buf);
@@ -715,7 +715,7 @@ int aws_iot_provisioning_main( int argc,
 
             /**** Call the RegisterThing API ****/
             char str[100];
-            snprintf(str,sizeof(str),"W100_%s",dynamicMacStr);
+            snprintf(str,sizeof(str),"C100_%s",dynamicMacStr);
 
             if( status == true ) status = generateRegisterThingRequest( payloadBuffer, NETWORK_BUFFER_SIZE, ownershipToken, ownershipTokenLength, str, strlen(str), &payloadLength );
             if( status == true ) status = subscribeToRegisterThingResponseTopics();

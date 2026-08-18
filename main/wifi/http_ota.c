@@ -29,6 +29,8 @@
 #include "esp_wifi.h"
 #endif
 #include "http_ota.h"
+#include "app_config_flash.h"
+
 TaskHandle_t xOTA_Handle = NULL;
 static uint8_t OTA_Enable = 0;
 #define HASH_LEN 32
@@ -87,6 +89,8 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     }
     return ESP_OK;
 }
+
+extern void system_reset(int reason);
 void simple_ota_example_task(void *pvParameter)
 {
     ESP_LOGI(TAG, "Starting OTA example task");
@@ -148,8 +152,7 @@ void simple_ota_example_task(void *pvParameter)
         vTaskDelete(xOTA_Handle);
     }
     while (1) {
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-        esp_restart();
+    	system_reset(REASON_OTA);
     }
 }
 

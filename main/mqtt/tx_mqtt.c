@@ -20,7 +20,7 @@ static cJSON* Get_cJSON_Header(messege_tx_mqtt_cmd_e cmd)
     if(root == NULL)
         return root;
     /* Root 레벨 필수 필드 추가 */
-    cJSON_AddStringToObject(root, "id", "123e4567-e89b-12d3-a456-426614174000"); /* 실제로는 uuid 생성 함수 사용 */
+    cJSON_AddStringToObject(root, "id", TEST_UUID); /* 실제로는 uuid 생성 함수 사용 */
     if(TRACKER_MESSEGE_ACTIVITY <= cmd)
     {
         cJSON_AddStringToObject(root, "env", "dev");
@@ -29,7 +29,7 @@ static cJSON* Get_cJSON_Header(messege_tx_mqtt_cmd_e cmd)
     else
     {
         cJSON_AddStringToObject(root, "env", "alpha");
-        cJSON_AddStringToObject(root, "device_type", "w100"); 
+        cJSON_AddStringToObject(root, "device_type", "c100"); 
     }
     
     switch(cmd)
@@ -43,8 +43,11 @@ static cJSON* Get_cJSON_Header(messege_tx_mqtt_cmd_e cmd)
         case MESSEGE_ACCESS:
             cJSON_AddStringToObject(root, "event_type", "access");
         break;
-        case MESSEGE_DRINK:
-            cJSON_AddStringToObject(root, "event_type", "drink");
+        case MESSEGE_USAGE:
+            cJSON_AddStringToObject(root, "event_type", "usage");
+        break;
+        case MESSEGE_CLEAN_RESULT:
+            cJSON_AddStringToObject(root, "event_type", "clean_result");
         break;
         case MESSEGE_DIAGNOSTICS:
             cJSON_AddStringToObject(root, "event_type", "diagnostics");
@@ -87,7 +90,8 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
     cJSON *data_obj = cJSON_CreateObject();
     uint8_t mac_byte[6];
     char dynamicMacStr[13]; // 12자리 MAC 문자열 + 널 종료 문자(\0)
-    cJSON *subsystems;
+    cJSON *susbsys_obj;
+    cJSON *sensor_obj;
     if(data_obj == NULL)
         return data_obj;
 
@@ -101,94 +105,56 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
             snprintf(dynamicMacStr, sizeof(dynamicMacStr), "%02X%02X%02X%02X%02X%02X",
                     mac_byte[0], mac_byte[1], mac_byte[2], mac_byte[3], mac_byte[4], mac_byte[5]);
 
-            cJSON_AddStringToObject(data_obj, "mac", dynamicMacStr);
-            cJSON_AddStringToObject(data_obj, "hw_rev", "r3.1");
-            
-            /* 🚨 필수 추가 필드: registration에는 home_id와 paired_at이 꼭 필요합니다 */
-            cJSON_AddStringToObject(data_obj, "home_id", "home_test_01");
-            cJSON_AddNumberToObject(data_obj, "paired_at", 1747396800);
+            cJSON_AddStringToObject(data_obj, "mac", dynamicMacStr);				// string
+            cJSON_AddStringToObject(data_obj, "hw_rev", "r3.1");					// string
+            cJSON_AddNumberToObject(data_obj, "paired_at", 1747396800);				// Long
         break;
         case MESSEGE_BOOT:
-            cJSON_AddStringToObject(data_obj, "boot_reason", "power_on");
-            cJSON_AddNumberToObject(data_obj, "uptime_sec", 0);
-            
-            cJSON_AddStringToObject(data_obj, "power_source", "ADAPTER");
-            cJSON_AddNumberToObject(data_obj, "reset_reason", 0);
-            cJSON_AddStringToObject(data_obj, "last_shutdown_reason", "unknown");            
+            cJSON_AddStringToObject(data_obj, "boot_reason", "power_on");			// string
+            cJSON_AddNumberToObject(data_obj, "uptime_sec", 0);						// Long
+            cJSON_AddStringToObject(data_obj, "power_source", "ADAPTER");			// string
+            cJSON_AddNumberToObject(data_obj, "reset_reason", 0);					// integer
         break;
         case MESSEGE_ACCESS:
-            cJSON_AddStringToObject(data_obj, "access_id", "1234");
-            cJSON_AddStringToObject(data_obj, "source", "sensor");
-            cJSON_AddStringToObject(data_obj, "beacon_id", "UNKNOWN");
-            cJSON_AddNumberToObject(data_obj, "rssi_dbm", 0);
-// 🔧 수정: 문자열이 아닌 Float(숫자) 타입으로 전달해야 함
-            cJSON_AddNumberToObject(data_obj, "start_weight", 100.2);
+            cJSON_AddStringToObject(data_obj, "access_id", TEST_UUID);				// string
+            cJSON_AddStringToObject(data_obj, "source", "sensor");					// string
+            cJSON_AddStringToObject(data_obj, "beacon_id", "TRACKER_112233445566");	// string
+            cJSON_AddNumberToObject(data_obj, "rssi_dbm", 0);						// integer
         break;
-        case MESSEGE_DRINK:
-            cJSON_AddStringToObject(data_obj, "drink_id", "550e8400-e29b-41d4-a716-446655440000");
-            cJSON_AddStringToObject(data_obj, "session_type", "unknown");
-
-            // 1. access_id_refs: 아이템을 추가하지 않고 빈 배열 그대로 루트에 전달
-            cJSON *access_id_refs = cJSON_CreateArray();
-            //cJSON_AddItemToArray(access_id_refs, cJSON_CreateString("acc_001"));
-            //cJSON_AddItemToArray(access_id_refs, cJSON_CreateString("acc_002"));
-            cJSON_AddItemToObject(data_obj, "access_id_refs", access_id_refs);
-
-            // 2. participants: 아이템을 추가하지 않고 빈 배열 그대로 루트에 전달
-            cJSON *participants = cJSON_CreateArray();
-            #if 0 
-            // 첫 번째 participant 객체 생성 및 입력
-            cJSON *pet1 = cJSON_CreateObject();
-            cJSON_AddStringToObject(pet1, "pet_id", "pet_001");
-            cJSON_AddNumberToObject(pet1, "duration_sec", 120);
-            cJSON_AddItemToArray(participants, pet1);
-            
-            // (필요 시) 두 번째 participant 객체 추가 예시 (최대 5개)
-            cJSON *pet2 = cJSON_CreateObject();
-            cJSON_AddStringToObject(pet2, "pet_id", "pet_002");
-            cJSON_AddNumberToObject(pet2, "duration_sec", 45);
-            cJSON_AddItemToArray(participants, pet2);            
-            #endif
-            cJSON_AddItemToObject(data_obj, "participants", participants);
-
-            // 5. 나머지 숫자 및 선택 필드 추가
-            cJSON_AddNumberToObject(data_obj, "start_weight", 500.5);   // Float
-            cJSON_AddNumberToObject(data_obj, "end_weight", 420.2);     // Float
-            cJSON_AddNumberToObject(data_obj, "total_intake_ml", 80.3); // Float
-            cJSON_AddNumberToObject(data_obj, "duration_sec", 165);     // Integer
-            
-            // 선택 필드 (조건에 따라 추가 안 해도 됨)
-            cJSON_AddStringToObject(data_obj, "alert_type", "NONE");
+        case MESSEGE_USAGE:
+            cJSON_AddStringToObject(data_obj, "usage_id", TEST_UUID);				// string
+            cJSON_AddStringToObject(data_obj, "session_type", "unknown");			// string
+            cJSON_AddStringToObject(data_obj, "access_id_refs", "");				// string
+            cJSON_AddStringToObject(data_obj, "tracker_id", "TRACKER_112233445566");// string
+            cJSON_AddNumberToObject(data_obj, "cat_weight", 3500.0);				// float
+            cJSON_AddNumberToObject(data_obj, "waste_raw", 10.0);					// float
+            cJSON_AddNumberToObject(data_obj, "duration_sec", 120);					// integer
+        break;
+        case MESSEGE_CLEAN_RESULT:
+            cJSON_AddStringToObject(data_obj, "clean_id", TEST_UUID);				// string
+            cJSON_AddStringToObject(data_obj, "trigger", "device_button");			// string
+            cJSON_AddStringToObject(data_obj, "target_usage_ids", "");				// string
+            cJSON_AddNumberToObject(data_obj, "disposed", 10.0);					// float
+            cJSON_AddNumberToObject(data_obj, "waste_ratio", 1.0);					// float
+            cJSON_AddNumberToObject(data_obj, "waste_type", 1);						// integer
+            cJSON_AddNumberToObject(data_obj, "send_level", 0);						// integer
+            cJSON_AddStringToObject(data_obj, "request_token_ref", TEST_UUID);		// string
         break;
         case MESSEGE_DIAGNOSTICS:
             // 2. 공통 스칼라 필드 추가
-            cJSON_AddNumberToObject(data_obj, "uptime_sec", 174739);
-            cJSON_AddNumberToObject(data_obj, "reset_reason", 0);
-            cJSON_AddNumberToObject(data_obj, "rssi_dbm", -70);
-
-            subsystems = cJSON_CreateObject();
-            cJSON_AddStringToObject(subsystems, "water_supply", "ok");
-            cJSON_AddStringToObject(subsystems, "motor.pump", "fault"); // 펌프 에러 발생
-            cJSON_AddStringToObject(subsystems, "loadcell", "ok");
-            cJSON_AddStringToObject(subsystems, "tof", "ok");
-            cJSON_AddStringToObject(subsystems, "ble", "ok");
-            cJSON_AddStringToObject(subsystems, "uv", "ok");
-            cJSON_AddStringToObject(subsystems, "filter.water", "ok");
-            cJSON_AddStringToObject(subsystems, "filter.debris", "ok");
-            cJSON_AddStringToObject(subsystems, "power",         "ok");
-            cJSON_AddItemToObject(data_obj, "subsystems", subsystems);
-
-            // 🔧 수정: W-100 fault_code 적용 (PUMP_ERR)
-            cJSON_AddStringToObject(data_obj, "mode", "operational");
-            cJSON_AddStringToObject(data_obj, "alert_level", "normal");
-            cJSON_AddStringToObject(data_obj, "fault_code", "PUMP_ERR");
-            cJSON_AddStringToObject(data_obj, "affected_subsystem", "motor.pump");
-
-            // context 객체
-            cJSON *context = cJSON_CreateObject();
-            cJSON_AddNumberToObject(context, "pump_current_mA", 0); // 펌프 전류 측정값 예시
-            cJSON_AddNumberToObject(context, "retry_count", 3);
-            cJSON_AddItemToObject(data_obj, "context", context);
+            cJSON_AddStringToObject(data_obj, "alert_level", "critical");			// string
+            cJSON_AddStringToObject(data_obj, "fault_code", "LOADCELL_ERR");		// string
+            cJSON_AddStringToObject(data_obj, "affected_subsystem", "loadcell");	// string
+            sensor_obj = cJSON_CreateObject();
+            cJSON_AddItemToObject(data_obj, "context", sensor_obj);				// object
+            cJSON_AddNumberToObject(data_obj, "uptime_sec", 1747396800);			// Long
+            cJSON_AddNumberToObject(data_obj, "reset_reason", 0);					// integer
+            cJSON_AddNumberToObject(data_obj, "rssi_dbm", 0);						// integer
+            susbsys_obj = cJSON_CreateObject();
+/*            cJSON_AddStringToObject(susbsys_obj, "water_supply", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "filter.debris", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "power",         "ok"); */
+            cJSON_AddItemToObject(data_obj, "susbsys_obj", susbsys_obj);			// object
         break;
         case MESSEGE_HEALTH:
       // 🔧 수정: W-100 서브시스템 정의 적용
@@ -196,17 +162,17 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
             cJSON_AddNumberToObject(data_obj, "uptime_sec", 174739);
             cJSON_AddNumberToObject(data_obj, "reset_reason", 0);
             cJSON_AddNumberToObject(data_obj, "rssi_dbm", -70);
-            subsystems = cJSON_CreateObject();
-            cJSON_AddStringToObject(subsystems, "water_supply", "ok");
-            cJSON_AddStringToObject(subsystems, "motor.pump", "ok");
-            cJSON_AddStringToObject(subsystems, "loadcell", "ok");
-            cJSON_AddStringToObject(subsystems, "tof", "ok");
-            cJSON_AddStringToObject(subsystems, "ble", "ok");
-            cJSON_AddStringToObject(subsystems, "uv", "ok");
-            cJSON_AddStringToObject(subsystems, "filter.water", "ok");
-            cJSON_AddStringToObject(subsystems, "filter.debris", "ok");
-            cJSON_AddStringToObject(subsystems, "power",         "ok");
-            cJSON_AddItemToObject(data_obj, "subsystems", subsystems);   
+            susbsys_obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(susbsys_obj, "water_supply", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "motor.pump", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "loadcell", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "tof", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "ble", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "uv", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "filter.water", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "filter.debris", "ok");
+            cJSON_AddStringToObject(susbsys_obj, "power",         "ok");
+            cJSON_AddItemToObject(data_obj, "susbsys_obj", susbsys_obj);   
 
             // 🔧 필수 추가: W-100 헬스 측정 데이터 항목 (§2.6 참조)
             cJSON_AddStringToObject(data_obj, "power_source", "ADAPTER");
@@ -227,19 +193,19 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
 }
 
 // -------------------------------------------------------------
-// T-100 전용 subsystems cJSON 객체 생성 함수
+// T-100 전용 susbsys_obj cJSON 객체 생성 함수
 // -------------------------------------------------------------
 cJSON* create_t100_subsystems_json(fault_code fault)
 {
-    cJSON *subsystems = cJSON_CreateObject();
+    cJSON *susbsys_obj = cJSON_CreateObject();
     
     // fault_code 비트필드 상태에 따라 "ok" / "fault" 매핑
-    cJSON_AddStringToObject(subsystems, "power",   (fault.bit.Bat_Status > 1) ? "fault" : "ok");
-    cJSON_AddStringToObject(subsystems, "imu",     (fault.bit.IMU_Err)       ? "fault" : "ok");
-    cJSON_AddStringToObject(subsystems, "ble",     (fault.bit.BLE_Err)       ? "fault" : "ok");
-    cJSON_AddStringToObject(subsystems, "storage", (fault.bit.storage)       ? "fault" : "ok");
+    cJSON_AddStringToObject(susbsys_obj, "power",   (fault.bit.Bat_Status > 1) ? "fault" : "ok");
+    cJSON_AddStringToObject(susbsys_obj, "imu",     (fault.bit.IMU_Err)       ? "fault" : "ok");
+    cJSON_AddStringToObject(susbsys_obj, "ble",     (fault.bit.BLE_Err)       ? "fault" : "ok");
+    cJSON_AddStringToObject(susbsys_obj, "storage", (fault.bit.storage)       ? "fault" : "ok");
 
-    return subsystems;
+    return susbsys_obj;
 }
 static cJSON* Get_cJSON_Data_for_Tracker(messege_tx_mqtt_cmd_e cmd, tracker_mqtt_packet_t* tracker_mqtt_packet)
 {
@@ -247,7 +213,7 @@ static cJSON* Get_cJSON_Data_for_Tracker(messege_tx_mqtt_cmd_e cmd, tracker_mqtt
     Motion_Packet_t* packet = &tracker_mqtt_packet->packet;
     const uint16_t * points;
     char dynamicMacStr[30]; // 12자리 MAC 문자열 + 널 종료 문자(\0)
-    cJSON *subsystems;
+    cJSON *susbsys_obj;
     if(data_obj == NULL)
         return data_obj;
 
@@ -290,9 +256,9 @@ static cJSON* Get_cJSON_Data_for_Tracker(messege_tx_mqtt_cmd_e cmd, tracker_mqtt
             cJSON_AddNumberToObject(data_obj, "rssi_dbm", packet->health_data_res.target_rssi);
 
             // 3. T-100 서브시스템 상태 스냅샷 (§7 명세)
-            subsystems = create_t100_subsystems_json(packet->health_data_res.fault_flag);
+            susbsys_obj = create_t100_subsystems_json(packet->health_data_res.fault_flag);
 
-            cJSON_AddItemToObject(data_obj, "subsystems", subsystems);
+            cJSON_AddItemToObject(data_obj, "susbsys_obj", susbsys_obj);
 
             // 4. 진단 전용 정보 (§3.3 & §6 명세)
             cJSON_AddStringToObject(data_obj, "mode", "operational"); // operational / qc / obd
@@ -339,9 +305,9 @@ static cJSON* Get_cJSON_Data_for_Tracker(messege_tx_mqtt_cmd_e cmd, tracker_mqtt
 
             // 3. T-100 서브시스템 상태 스냅샷 (§7 명세)
             // 3. T-100 서브시스템 상태 스냅샷 (§7 명세)
-            subsystems = create_t100_subsystems_json(packet->health_data_res.fault_flag);
+            susbsys_obj = create_t100_subsystems_json(packet->health_data_res.fault_flag);
                 
-            cJSON_AddItemToObject(data_obj, "subsystems", subsystems);
+            cJSON_AddItemToObject(data_obj, "susbsys_obj", susbsys_obj);
 
             // 4. T-100 전용 헬스 필드 (T-100 §3.4 명세)
             cJSON_AddNumberToObject(data_obj, "battery_pct", packet->health_data_res.Bat_Level);
@@ -413,8 +379,11 @@ void Send_cJSON_Messege(messege_tx_mqtt_cmd_e cmd)
             case MESSEGE_ACCESS:
                 snprintf(pub_topic,sizeof(pub_topic),SERVER_TX_TOPIC_ACCESS,dynamicMacStr);
             break;
-            case MESSEGE_DRINK:
-                snprintf(pub_topic,sizeof(pub_topic),SERVER_TX_TOPIC_DRINK,dynamicMacStr);
+            case MESSEGE_USAGE:
+                snprintf(pub_topic,sizeof(pub_topic),SERVER_TX_TOPIC_USAGE,dynamicMacStr);
+            break;
+            case MESSEGE_CLEAN_RESULT:
+                snprintf(pub_topic,sizeof(pub_topic),SERVER_TX_TOPIC_CLEAN_RESULT,dynamicMacStr);
             break;
             case MESSEGE_DIAGNOSTICS:
                 snprintf(pub_topic,sizeof(pub_topic),SERVER_TX_TOPIC_DIAGNOSTICS,dynamicMacStr);

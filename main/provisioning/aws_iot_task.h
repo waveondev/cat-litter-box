@@ -5,6 +5,7 @@
 /**
  * @brief AWS IoT 및 Fleet Provisioning을 수행하는 백그라운드 태스크를 생성합니다.
  */
+bool get_aws_started(void);
 void aws_iot_task_init(void);
 void mqtt_queue_send(messege_tx_mqtt_cmd_e cmd);
 void tracker_mqtt_queue_send(messege_tx_mqtt_cmd_e cmd, uint8_t* mac, Motion_Packet_t* packet);

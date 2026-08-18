@@ -5,6 +5,17 @@
 
 #define BLE_DEVICENAME_LEN 32
 #define WIFI_PASSWORD_LEN 64
+
+typedef enum {
+	REASON_NORMAL = 0,
+	REASON_FAULT,
+	REASON_FACTORY_RESTORE,
+	REASON_OTA,
+	REASON_DIAG,
+	REASON_TEST,
+	REASON_MAX
+} reset_reason_t;
+
 typedef struct{
 	// dedicated setting value for cat-toilet
 	uint32_t MIN_VALID_WASTE_RAW;	// default : 5.0 g
@@ -14,10 +25,8 @@ typedef struct{
 	uint32_t WASTE_TYPE_RATIO_TH;	// default : 20
 	uint32_t EFFECTIVE_DWELL_TIME;	// default : 5 sec
 
+    int32_t reset_reason;			// reset reason, vincent
     int32_t gate_way_rssi_th;
-    float hx1_scale;                 // counts per gram
-    int32_t hx1_offset;              // tare offset
-    uint32_t case_raw_data;
     uint32_t tof_sense_threshold_l;
     uint32_t tof_sense_threshold_r;
     uint32_t motion_data_time;

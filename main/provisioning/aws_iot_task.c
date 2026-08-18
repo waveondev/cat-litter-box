@@ -71,6 +71,7 @@ static void aws_iot_main_entry(void *pvParameters)
     ESP_LOGI(TAG, "인터넷 연결 확인됨! AWS Fleet Provisioning 프로세스를 시작합니다.");
 
     aws_iot_provisioning_main(0, NULL);
+    is_aws_started = true;
 
     ESP_LOGI(TAG,"=== 2. MQTT 루프를 시작합니다 ===");
 
@@ -88,6 +89,11 @@ static void aws_iot_main_entry(void *pvParameters)
     }
 
     vTaskDelete(NULL); // 만약 루프를 빠져나간다면 태스크 종료
+}
+
+bool get_aws_started(void)
+{
+	return is_aws_started;
 }
 
 void aws_iot_task_init(void)
@@ -123,8 +129,7 @@ void aws_iot_task_init(void)
 
 
         //xTaskCreate(aws_iot_main_entry, "aws_iot_task", 24576, NULL, 5, NULL);
-        is_aws_started = true;
+//        is_aws_started = true;
     }
-
 
 }

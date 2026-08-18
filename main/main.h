@@ -73,8 +73,8 @@ extern "C" {
 //#define FEATURE_PT_TEST
 //#define FEATURE_MAIN_COVER_DC_MOTOR
 
-#define FEATURE_WAVEON_COMMON
-#ifdef FEATURE_WAVEON_COMMON
+#define FEATURE_AWS_IOT
+#ifdef FEATURE_AWS_IOT
 #include "ble_tracker_id.h"
 #include "esp_spiffs.h"
 #include "wifi_task.h"
@@ -90,6 +90,8 @@ typedef struct {
     uint32_t task_id;
     uint32_t cmd;
 } message_t;
+
+void system_reset(int reason);
 
 #ifdef __cplusplus
 }

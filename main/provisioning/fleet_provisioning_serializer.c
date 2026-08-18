@@ -285,7 +285,7 @@ bool generateRegisterThingRequest( uint8_t * pBuffer,
     }
     if( cborRet == CborNoError )
     {
-        cborRet = cbor_encode_text_stringz( &parametersEncoder, "w100" );
+        cborRet = cbor_encode_text_stringz( &parametersEncoder, "c100" );
     }
     /* ------------------------------------------------------------------------- */
 

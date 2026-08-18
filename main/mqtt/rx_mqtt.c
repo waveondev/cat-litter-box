@@ -101,7 +101,7 @@ bool mqtt_subscribe_init(void)
     }
 
 
-    snprintf(sub_topic,sizeof(sub_topic),SERVER_RX_TOPIC_DRINK,dynamicMacStr);
+    snprintf(sub_topic,sizeof(sub_topic),SERVER_RX_TOPIC_USAGE,dynamicMacStr);
 
     subTopic = topic_copy(sub_topic);
     if(subTopic != NULL)
@@ -119,6 +119,24 @@ bool mqtt_subscribe_init(void)
         ESP_LOGI(TAG, "=== %d. 메모리 실패 === %s", topic_count, sub_topic);
     }
 
+
+    snprintf(sub_topic,sizeof(sub_topic),SERVER_RX_TOPIC_CLEAN_RESULT,dynamicMacStr);
+
+    subTopic = topic_copy(sub_topic);
+    if(subTopic != NULL)
+    {
+        ESP_LOGI(TAG, "=== %d. 구독 === %s" , topic_count, subTopic);
+        subStatus = SubscribeToTopic( subTopic, strlen( subTopic ) );
+
+        if( subStatus != true )
+        {
+            ESP_LOGI(TAG, "=== %d. 구독 실패 === %s", topic_count, sub_topic);
+        }
+    }
+    else
+    {
+        ESP_LOGI(TAG, "=== %d. 메모리 실패 === %s", topic_count, sub_topic);
+    }
 
     snprintf(sub_topic,sizeof(sub_topic),SERVER_RX_TOPIC_DIAGNOSTICS,dynamicMacStr);
 

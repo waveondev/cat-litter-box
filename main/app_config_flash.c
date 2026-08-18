@@ -14,12 +14,11 @@ app_config_t app_config =
 	.CLUMPING_WAIT_MIN = 10,	// unit : minute
 	.JAM_CURRENT_LIMIT = 1200,	// unit : mA
 	.CAT_ENTRY_MIN_WEIGHT = 500,// unit : g
-	.WASTE_TYPE_RATIO_TH = 20,	// unit : 0.1
+	.WASTE_TYPE_RATIO_TH = 20,	// unit : 0.1g
 	.EFFECTIVE_DWELL_TIME = 5,	// unit : second
 
+	.reset_reason = REASON_NORMAL,
     .gate_way_rssi_th = -55,
-    .hx1_scale = 1000.0f,
-    .hx1_offset = 0,
     .tof_sense_threshold_l = 250,
     .tof_sense_threshold_r = 250,
     .motion_data_time = 1800,
@@ -89,8 +88,6 @@ void dump_all_configurations(void)
     ESP_LOGI(TAG, "  - EFFECTIVE_DWELL_TIME : %ld sec", app_config.EFFECTIVE_DWELL_TIME);
     
     ESP_LOGI(TAG, "  - Gateway RSSI Thr     : %ld dBm", app_config.gate_way_rssi_th);
-    ESP_LOGI(TAG, "  - HX1 Scale Factor     : %.2f", app_config.hx1_scale);
-    ESP_LOGI(TAG, "  - HX1 Tare Offset      : %ld", app_config.hx1_offset);
     ESP_LOGI(TAG, "  - tof_sense_threshold_l: %ld", app_config.tof_sense_threshold_l);
     ESP_LOGI(TAG, "  - tof_sense_threshold_r: %ld", app_config.tof_sense_threshold_r);
     ESP_LOGI(TAG, "  - motion_data_time     : %ld", app_config.motion_data_time);
@@ -147,8 +144,9 @@ void load_app_configuration(void)
         // 기본값 세팅 후 NVS에 최초로 구워두기
         write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
     } else {
-        ESP_LOGI(TAG,"[CONFIG] NVS에서 시스템 설정 로드 성공!저울 Offset: %d)\r\n", 
-                          app_config.hx1_offset);
+//        ESP_LOGI(TAG,"[CONFIG] NVS에서 시스템 설정 로드 성공!저울 Offset: %d)\r\n", 
+//                          app_config.hx1_offset);
+		ESP_LOGI(TAG,"[CONFIG] 설정 load 성공 \r\n");
     }
 }
 
@@ -168,8 +166,6 @@ static void save_app_configuration(void)
         // 두 메모리 블록이 100% 일치하면 0을 리턴합니다.
         if (memcmp(&app_config, &temp_cfg, sizeof(app_config_t)) == 0) {
             ESP_LOGI(TAG, "[CONFIG] NVS 데이터 검증 성공! 저장된 값이 원본과 100%% 일치합니다.");
-            ESP_LOGI(TAG, "[CONFIG] 로드된  저울 Offset: %ld", 
-                      temp_cfg.hx1_offset);
         } else {
             // 플래시 메모리 물리적 손상이나 섹터 오류 시 감지됨
             ESP_LOGE(TAG, "[CONFIG] ?? NVS 데이터 검증 실패! 저장된 값이 원본과 일치하지 않습니다!");
