@@ -195,6 +195,6 @@ void ui_init(void)
     xTaskCreate(ui_task, "ui_task", UI_TASK_STACK_SIZE, NULL, 10, NULL);
 
     // idle led display
-    message_t msg;
-    send_led_cmd_msg(&msg, LED_IDLE_CMD);
+//    message_t msg;
+//    send_led_cmd_msg(&msg, LED_IDLE_CMD);
 }

@@ -30,8 +30,6 @@ static const char *TAG = "APP_MAIN";
 #define PARSE_BUF_SIZE 		(128)
 #define UART_MAX_TIMEOUT 	(10)
 
-//static unsigned int reset_reason = 0;
-
 // ring buffer
 typedef struct {
     unsigned char buffer[RX_BUF_SIZE];
@@ -43,6 +41,8 @@ RingBuffer rx_ring;
 unsigned char rx_byte; // 1바이트 수신 인터럽트용 변수
 char parse_buf[PARSE_BUF_SIZE];
 unsigned short parse_idx = 0;
+
+static unsigned int reset_reason = 0;
 
 void RingBuffer_Push(unsigned char data) {
     unsigned short next = (rx_ring.head + 1) % RX_BUF_SIZE;
@@ -429,15 +429,20 @@ void check_boot_mode(void)
 
     ESP_LOGI(TAG, "%s RESET reason %d ", __func__, app->reset_reason);
 
-//	reset_reason |= 1<<mode;
+	reset_reason |= 1<<mode;
 
 	if(mode != REASON_NORMAL)
 	{
 		// reset reason clear
 		app->reset_reason = REASON_NORMAL;
         app_nvs_save_set();
-//        vTaskDelay(pdMS_TO_TICKS(500)); // wait to save data
+        vTaskDelay(pdMS_TO_TICKS(500)); // wait to save data
 	}
+	}
+
+unsigned int get_boot_reason(void)
+{
+	return reset_reason;
 }
 
 void system_reset(int reason)
@@ -505,6 +510,43 @@ static esp_vfs_spiffs_conf_t spiffs_conf = {
 
 static void filesystem_init(void)
 {
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+    
+    esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
+
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition in partition table");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+
+    ESP_LOGI(TAG, "SPIFFS mounted successfully");
+
+    // 용량 정보 출력 (디버깅용 선택 사항)
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(spiffs_conf.partition_label, &total, &used);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Partition size: total: %d bytes, used: %d bytes", total, used);
+    } else {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    }
+}
+
+#else
+static esp_vfs_spiffs_conf_t spiffs_conf = {
+  .base_path = "/spiffs",
+  .partition_label = "spiffs_storage",
+  .max_files = 5,
+  .format_if_mount_failed = true
+};
+
+static void filesystem_init(void)
+{
     ESP_LOGI("SPIFFS", "Initializing SPIFFS");
     esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
     if (ret != ESP_OK) {
@@ -515,7 +557,16 @@ static void filesystem_init(void)
 }
 #endif
 
-#define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 3)
+void check_file() {
+    // 1. 파일이 실제로 존재하는지 확인
+    struct stat st;
+    if (stat("/spiffs/certs/claim_cert.crt", &st) == 0) {
+        printf("file exist : %ld bytes\n", st.st_size);
+    } else {
+        printf("error : failed to find claim_cert.crt \n");
+    }
+}
+
 void app_main(void) {
 
     get_freeheap_size((int)__LINE__);
@@ -534,6 +585,7 @@ void app_main(void) {
 #ifdef FEATURE_AWS_IOT
     // [by.jeon] 가??? 드? 스??SPIFFS) 켜기! (? 증?  ? ? 기 ? 해 ? 수)
     filesystem_init();
+    check_file();
 #endif
     get_freeheap_size((int)__LINE__);
 
@@ -549,7 +601,7 @@ void app_main(void) {
 
     const esp_partition_t *running_part = esp_ota_get_running_partition();
     ESP_LOGI(TAG, "===============================================");
-    ESP_LOGI(TAG, "Current Running Partition: %s FLASH_TASK_STACK_SIZE %d", running_part->label, FLASH_TASK_STACK_SIZE);
+    ESP_LOGI(TAG, "Current Running Partition: %s ", running_part->label);
     ESP_LOGI(TAG, "===============================================");
 
 	// aws iot + wifi + BLE Moudles
@@ -557,47 +609,45 @@ void app_main(void) {
     Create_Tracker_Capture_Task();
     ble_task_init();
     wifi_init();
-   // console_task_init();
-
 #endif
     get_freeheap_size((int)__LINE__);
 	// cat-litter box only Modules
 	uv_led_init();
-        get_freeheap_size((int)__LINE__);
 	led_init();
-        get_freeheap_size((int)__LINE__);
 #ifdef FEATURE_SENSOR_INPUT
     sensor_init();
-        get_freeheap_size((int)__LINE__);
     loadcell_init();
-        get_freeheap_size((int)__LINE__);
 #endif
 	dc_motor_init();
-        get_freeheap_size((int)__LINE__);
     step_motor_init();
-        get_freeheap_size((int)__LINE__);
     current_monitor_init();
-        get_freeheap_size((int)__LINE__);
 	ui_init();
-        get_freeheap_size((int)__LINE__);
 	keyscan_init();
     get_freeheap_size((int)__LINE__);
-	Usage();
+//	Usage();
 	
 #ifdef FEATURE_INITIAL_CAL
     motor_calibration(NULL);
 #endif
-	aws_iot_task_init();
+
+#ifdef FEATURE_AWS_IOT
+    aws_iot_task_init();
     while(1)
     {
-       // get_freeheap_size((int)__LINE__);
+        get_freeheap_size((int)__LINE__);
         vTaskDelay(pdMS_TO_TICKS(1000));
         if(get_aws_started())
         {
-        	ESP_LOGI(TAG, "provisioning finished !!");
-			break;
+            ESP_LOGI(TAG, "provisioning finished !!");
+            break;
         }
     }   
+#endif
+	{
+	    // idle led display
+	    message_t msg;
+	    send_led_cmd_msg(&msg, LED_IDLE_CMD);
+	}
 	while(1)
 	{
         get_freeheap_size((int)__LINE__);

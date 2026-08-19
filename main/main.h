@@ -37,7 +37,6 @@ extern "C" {
 #include "keyscan.h"
 #include "uv_led.h"
 #include "led.h"
-#include "wifi_rssi_test.h"
 #include "ui.h"
 #include "sensor.h"
 #include "iot_button.h"
@@ -80,6 +79,8 @@ extern "C" {
 #include "wifi_task.h"
 #include "ble_task.h"
 #include "aws_iot_task.h"
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #define UART_BUF_SIZE      (1024)
