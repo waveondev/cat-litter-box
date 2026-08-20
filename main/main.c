@@ -526,43 +526,6 @@ static esp_vfs_spiffs_conf_t spiffs_conf = {
 
 static void filesystem_init(void)
 {
-    ESP_LOGI(TAG, "Initializing SPIFFS");
-    
-    esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
-
-    if (ret != ESP_OK) {
-        if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount or format filesystem");
-        } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to find SPIFFS partition in partition table");
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
-        }
-        return;
-    }
-
-    ESP_LOGI(TAG, "SPIFFS mounted successfully");
-
-    // 용량 정보 출력 (디버깅용 선택 사항)
-    size_t total = 0, used = 0;
-    ret = esp_spiffs_info(spiffs_conf.partition_label, &total, &used);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Partition size: total: %d bytes, used: %d bytes", total, used);
-    } else {
-        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
-    }
-}
-
-#else
-static esp_vfs_spiffs_conf_t spiffs_conf = {
-  .base_path = "/spiffs",
-  .partition_label = "spiffs_storage",
-  .max_files = 5,
-  .format_if_mount_failed = true
-};
-
-static void filesystem_init(void)
-{
     ESP_LOGI("SPIFFS", "Initializing SPIFFS");
     esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
     if (ret != ESP_OK) {
@@ -573,15 +536,6 @@ static void filesystem_init(void)
 }
 #endif
 
-void check_file() {
-    // 1. 파일이 실제로 존재하는지 확인
-    struct stat st;
-    if (stat("/spiffs/certs/claim_cert.crt", &st) == 0) {
-        printf("file exist : %ld bytes\n", st.st_size);
-    } else {
-        printf("error : failed to find claim_cert.crt \n");
-    }
-}
 
 void app_main(void) {
 
@@ -599,9 +553,7 @@ void app_main(void) {
     get_freeheap_size((int)__LINE__);
     
 #ifdef FEATURE_AWS_IOT
-    // [by.jeon] 가??? 드? 스??SPIFFS) 켜기! (? 증?  ? ? 기 ? 해 ? 수)
     filesystem_init();
-//    check_file();
 #endif
     get_freeheap_size((int)__LINE__);
 
@@ -662,10 +614,10 @@ void app_main(void) {
             ESP_LOGI(TAG, "provisioning finished !!");
             break;
         }
-    }   
-	        // idle led display
-	        message_t lmsg;
-	        send_led_cmd_msg(&lmsg, LED_IDLE_CMD);
+    }
+    // idle led display
+    message_t lmsg;
+    send_led_cmd_msg(&lmsg, LED_IDLE_CMD);
 #endif
 	{
 	    // idle led display
