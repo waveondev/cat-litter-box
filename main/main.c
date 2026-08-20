@@ -659,12 +659,12 @@ void app_main(void) {
             esp_bt_controller_disable();
             esp_bt_controller_deinit();
 
-            // 3. 🔥 BLE 컨트롤러 메모리 완전히 반납
+            // 3. BLE 컨트롤러 메모리 완전히 반납
             esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
 
             vTaskDelay(pdMS_TO_TICKS(1000)); // 정리 완료 대기
 
-            ESP_LOGI(TAG, "==== 램 확보 완료! 이제 OTA 태스크를 생성합니다 ====");
+            ESP_LOGI(TAG, "==== 램 확보 완료! 이제 OTA 태스크 생성 ====");
 
             // 2. OTA 실행
             ota_main(OTA_URL);

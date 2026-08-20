@@ -93,7 +93,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 extern void system_reset(int reason);
 void simple_ota_example_task(void *pvParameter)
 {
-    // 프로비저닝 매니저 퇴근시키기 (BLE 끄고 메모리 반환)
+    // BLE 끄고 메모리 반환
     wifi_prov_mgr_deinit();
 
     // (확인용) 메모리 얼마나 늘어났나 체크
