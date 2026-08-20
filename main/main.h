@@ -92,7 +92,15 @@ typedef struct {
     uint32_t cmd;
 } message_t;
 
+typedef enum
+{
+	DISABLE = 0x0,
+    ENABLE
+} ENABLE_STATE_T;
+
+unsigned int get_boot_reason(void);
 void system_reset(int reason);
+unsigned int get_freeheap_size(int line);
 
 #ifdef __cplusplus
 }

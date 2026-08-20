@@ -275,6 +275,7 @@ void sensor_init(void)
 	int cnt;
 	sensor_mutex = xSemaphoreCreateMutex();
 	cnt = 0;
+#if 1
 	do{
 //        uart_write_bytes(UART_NUM_1, (const char *)"ss\n", strlen("ss\n"));
 		uart_write_bytes(UART_NUM_1, (const char *)"ss\n", 3);
@@ -290,4 +291,5 @@ void sensor_init(void)
 			break;
         }
 	} while(1);
+#endif
 }

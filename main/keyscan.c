@@ -75,7 +75,7 @@ static void key_polling_task(void *arg)
                     // 10초 이상 이벤트 발생 (최초 1회만)
                     if (duration >= TIME_THRES_10S && !keys[i].event_triggered_10s) {
                         keys[i].event_triggered_10s = true;
-                        if(keys[1].event_triggered_10s && keys[2].event_triggered_10s)
+                        if(keys[1].event_triggered_10s && keys[0].event_triggered_10s)
                         {
                             msg.task_id = (uint32_t)arg;
                             send_ui_cmd_msg(&msg, UI_FACTORY_CMD);

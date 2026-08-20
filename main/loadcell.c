@@ -74,12 +74,12 @@ void main_loadcell_sum_weight(int *raw_channels) {
     if (total_summed_weight < 0.3f && total_summed_weight > -0.3f) {
         total_summed_weight = 0.0f;
     }
-    ESP_LOGI(TAG, "main net weight %.2f g [CH1]: %.1f g, [CH2]: %.1f g, [CH3]: %.1f g, [CH4]: %.1f g", 
+/*    ESP_LOGI(TAG, "main net weight %.2f g [CH1]: %.1f g, [CH2]: %.1f g, [CH3]: %.1f g, [CH4]: %.1f g", 
              total_summed_weight, 
              each_calibrated_weight[0], 
              each_calibrated_weight[1], 
              each_calibrated_weight[2], 
-             each_calibrated_weight[3]);
+             each_calibrated_weight[3]); */
 }
 
 void waste_loadcell_sum_weight(int *raw_channels) {

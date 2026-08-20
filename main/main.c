@@ -490,14 +490,30 @@ void system_reset(int reason)
 	}
 }
 
+static unsigned int last_heap = 0;
 unsigned int get_freeheap_size(int line)
 {
+	unsigned int heap_size;
 //	UBaseType_t remaining_stack = uxTaskGetStackHighWaterMark(NULL); 
-	printf(">>  %d free heap %d bytes, min ever free %d bytes\r\n"
-			, line
-			, (int)xPortGetFreeHeapSize()
-			, (int)xPortGetMinimumEverFreeHeapSize());
-	return 0;
+    heap_size = xPortGetFreeHeapSize();
+	if(last_heap != 0)
+	{
+		printf(">>  %d: used %d bytes free heap %d bytes, min ever free %d bytes\r\n"
+				, line
+				, last_heap - heap_size
+				, (int)heap_size
+				, (int)xPortGetMinimumEverFreeHeapSize());
+	}
+	else
+	{
+		printf(">>>>  %d: free heap %d bytes, min ever free %d bytes\r\n"
+				, line
+				, (int)heap_size
+				, (int)xPortGetMinimumEverFreeHeapSize());
+
+	}
+	last_heap = heap_size;
+	return heap_size;
 }
 
 #ifdef FEATURE_AWS_IOT
@@ -585,7 +601,7 @@ void app_main(void) {
 #ifdef FEATURE_AWS_IOT
     // [by.jeon] 가??? 드? 스??SPIFFS) 켜기! (? 증?  ? ? 기 ? 해 ? 수)
     filesystem_init();
-    check_file();
+//    check_file();
 #endif
     get_freeheap_size((int)__LINE__);
 
@@ -625,7 +641,12 @@ void app_main(void) {
 	keyscan_init();
     get_freeheap_size((int)__LINE__);
 //	Usage();
-	
+		if(reset_reason & (1<<REASON_FACTORY_RESTORE))
+		{
+		    // automatically enter into pairing mode
+		    message_t msg;
+		    send_ui_cmd_msg(&msg, UI_PAIRING_CMD);
+		}
 #ifdef FEATURE_INITIAL_CAL
     motor_calibration(NULL);
 #endif
@@ -642,6 +663,9 @@ void app_main(void) {
             break;
         }
     }   
+	        // idle led display
+	        message_t lmsg;
+	        send_led_cmd_msg(&lmsg, LED_IDLE_CMD);
 #endif
 	{
 	    // idle led display

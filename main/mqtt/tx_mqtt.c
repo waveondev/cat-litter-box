@@ -175,17 +175,17 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
             cJSON_AddItemToObject(data_obj, "susbsys_obj", susbsys_obj);   
 
             // 🔧 필수 추가: W-100 헬스 측정 데이터 항목 (§2.6 참조)
-            cJSON_AddStringToObject(data_obj, "power_source", "ADAPTER");
-            cJSON_AddNumberToObject(data_obj, "water_level", 0);                // 0:충분, 1:부족, 2:없음
-            cJSON_AddNumberToObject(data_obj, "pump_status", 0);                // 0:정상, 1:결착불량/이물질
-            cJSON_AddNumberToObject(data_obj, "water_filter_life_pct", 95);     // 정수 필터 잔여수명 (%)
-            cJSON_AddNumberToObject(data_obj, "debris_filter_life_pct", 80);    // 이물질 필터 잔여수명 (%)
+            cJSON_AddStringToObject(data_obj, "power_source", "ADAPTER");		// string
+            cJSON_AddNumberToObject(data_obj, "sand_level", 0);                // 0:충분, 1:부족, 2:없음
+            cJSON_AddNumberToObject(data_obj, "bin_weight", 0);                // 0:정상, 1:결착불량/이물질
+            cJSON_AddNumberToObject(data_obj, "cover_open", 95);     // 정수 필터 잔여수명 (%)
+            cJSON_AddNumberToObject(data_obj, "maintenance_mode", 80);    // 이물질 필터 잔여수명 (%)
             cJSON_AddNumberToObject(data_obj, "uv_status", 0);                  // 0:미소독, 1:소독중, 2:일시중지
-            cJSON_AddNumberToObject(data_obj, "current_mode", 0);               // 0:급수, 1:정지, 2:스마트
+            cJSON_AddNumberToObject(data_obj, "free_heap", 0);               // 0:급수, 1:정지, 2:스마트
         break;
         default:
         cJSON_Delete(data_obj);
-        return NULL;
+        return NULL;        
     }
 
 

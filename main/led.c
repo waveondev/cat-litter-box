@@ -154,7 +154,6 @@ static int set_led_opmode(int mode)
 void led_process_task(void *arg)
 {
 //	ESP_LOGI(TAG, "%s +", __func__);
-//	int64_t start_tm, end_tm, elapsed;
 	
     while (1)
     {

@@ -83,7 +83,7 @@ void tracker_mqtt_queue_send(messege_tx_mqtt_cmd_e cmd, uint8_t* mac, Motion_Pac
 
 static void aws_iot_main_entry(void *pvParameters)
 {
-     ESP_LOGI(TAG, "AWS IoT 전담 태스크 시작");
+     ESP_LOGI(TAG, ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> AWS IoT 전담 태스크 시작");
     // Wi-Fi 연결 대기 (IP 할당 확인)
     xEventGroupWaitBits(
         s_wifi_event_group,
@@ -136,6 +136,7 @@ static void aws_iot_main_entry(void *pvParameters)
                 esp_restart();
         }
 
+        is_aws_started = true;
 
         // 2) MQTT 연결이 붙었으니 헬스 타이머 동작 시작!
         esp_timer_start_once(Health_timer, TIMER_1_MIN_IN_US);
@@ -181,9 +182,10 @@ bool get_aws_started(void)
 {
 	return is_aws_started;
 }
-#define AWS_IOT_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 4)
+#define AWS_IOT_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 6)
 void aws_iot_task_init(void)
 {
+    ESP_LOGI(TAG, "%s >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> AWS_IOT_TASK_STACK_SIZE %ld ", __func__, AWS_IOT_TASK_STACK_SIZE);
 
     if (is_aws_started == false) {
 
@@ -201,6 +203,6 @@ void aws_iot_task_init(void)
 
 
         //xTaskCreate(aws_iot_main_entry, "aws_iot_task", 24576, NULL, 5, NULL);
-        is_aws_started = true;
+//        is_aws_started = true;
     }
 }
