@@ -6,8 +6,8 @@
 
 #define TOF_MIN_VALID      	0x300
 #define TOF_MAX_VALID      	0x1F00
-#define TOF_DEBOUNCE_TIME   30   // 3ÃÊ Ã¤ÅÍ¸µ ¹æÁö
-#define LOOP_INTERVAL_MS   	100    // ¸ÞÀÎ ·çÇÁ ÁÖ±â (100ms)
+#define TOF_DEBOUNCE_TIME   30   // 3ï¿½ï¿½ Ã¤ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½
+#define LOOP_INTERVAL_MS   	100    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ö±ï¿½ (100ms)
 
 typedef enum {
     STATE_NO_APPROACH,
@@ -119,7 +119,7 @@ static int tof_proc(int tof_value)
 		return -1;
 		
     if (is_in_range) {
-        // À¯È¿ ¹üÀ§ ³» ÁøÀÔ ½Ã Áï½Ã Á¢±Ù »óÅÂ·Î ÀüÈ¯ ¹× Ä«¿îÅÍ ÃÊ±âÈ­
+        // ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Â·ï¿½ ï¿½ï¿½È¯ ï¿½ï¿½ Ä«ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
         current_state = STATE_APPROACH;
         chatter_counter_ms = 0;
         if(prev_state == STATE_NO_APPROACH)
@@ -129,11 +129,11 @@ static int tof_proc(int tof_value)
 //	    	send_motor_msg(&msg, MT_PAUSE_CMD);
 		}
     } else {
-        // À¯È¿ ¹üÀ§¸¦ ¹þ¾î³µÀ» ¶§ (Á¢±Ù ÇØÁ¦ Á¶°Ç)
+        // ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½î³µï¿½ï¿½ ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
         if (current_state == STATE_APPROACH) {
             chatter_counter_ms++;
             
-            // 3ÃÊ(3000ms) µ¿¾È À¯È¿ ¹üÀ§¸¦ ¹þ¾î³ª ÀÖ¾î¾ß ÃÖÁ¾ ÇØÁ¦ Ã³¸®
+            // 3ï¿½ï¿½(3000ms) ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½î³ª ï¿½Ö¾ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½
             if (chatter_counter_ms >= TOF_DEBOUNCE_TIME) {
                 current_state = STATE_NO_APPROACH;
                 prev_state = STATE_NO_APPROACH;
@@ -275,7 +275,7 @@ void sensor_init(void)
 	int cnt;
 	sensor_mutex = xSemaphoreCreateMutex();
 	cnt = 0;
-#if 1
+#if 0
 	do{
 //        uart_write_bytes(UART_NUM_1, (const char *)"ss\n", strlen("ss\n"));
 		uart_write_bytes(UART_NUM_1, (const char *)"ss\n", 3);

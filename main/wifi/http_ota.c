@@ -30,7 +30,7 @@
 #endif
 #include "http_ota.h"
 #include "app_config_flash.h"
-
+#include "wifi_provisioning/manager.h"
 TaskHandle_t xOTA_Handle = NULL;
 static uint8_t OTA_Enable = 0;
 #define HASH_LEN 32
@@ -93,20 +93,32 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 extern void system_reset(int reason);
 void simple_ota_example_task(void *pvParameter)
 {
+    // 프로비저닝 매니저 퇴근시키기 (BLE 끄고 메모리 반환)
+    wifi_prov_mgr_deinit();
+
+    // (확인용) 메모리 얼마나 늘어났나 체크
+    ESP_LOGI(TAG, "프로비저닝 끄고 남은 램: %lu", esp_get_free_heap_size());
+
+    // 동적 할당된 URL 포인터
+    char *url_ptr = (char *)pvParameter;
+
     ESP_LOGI(TAG, "Starting OTA example task");
     uint8_t state = 2;
+
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
     esp_netif_t *netif = get_example_netif_from_desc(bind_interface_name);
     if (netif == NULL) {
         ESP_LOGE(TAG, "Can't find netif from interface description");
+        free(url_ptr); // 종료 전 메모리 해제
         abort();
     }
     struct ifreq ifr;
     esp_netif_get_netif_impl_name(netif, ifr.ifr_name);
     ESP_LOGI(TAG, "Bind interface name is %s", ifr.ifr_name);
 #endif
+
     esp_http_client_config_t config = {
-        .url = pvParameter,
+        .url = url_ptr,
 #ifdef CONFIG_EXAMPLE_USE_CERT_BUNDLE
         .crt_bundle_attach = esp_crt_bundle_attach,
 #else
@@ -114,46 +126,43 @@ void simple_ota_example_task(void *pvParameter)
 #endif /* CONFIG_EXAMPLE_USE_CERT_BUNDLE */
         .event_handler = _http_event_handler,
         .keep_alive_enable = true,
+        .buffer_size = 1024,   
+        .buffer_size_tx = 512,
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
         .if_name = &ifr,
 #endif
     };
 
-#ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL_FROM_STDIN
-    char url_buf[OTA_URL_SIZE];
-    if (strcmp(config.url, "FROM_STDIN") == 0) {
-        example_configure_stdin_stdout();
-        fgets(url_buf, OTA_URL_SIZE, stdin);
-        int len = strlen(url_buf);
-        url_buf[len - 1] = '\0';
-        config.url = url_buf;
-    } else {
-        ESP_LOGE(TAG, "Configuration mismatch: wrong firmware upgrade image url");
-        abort();
-    }
-#endif
-
 #ifdef CONFIG_EXAMPLE_SKIP_COMMON_NAME_CHECK
     config.skip_cert_common_name_check = true;
 #endif
+
     OTA_Enable = 1;
     esp_https_ota_config_t ota_config = {
         .http_config = &config,
     };
-//    led_bit_enable(OTA_START_BIT);
+
     ESP_LOGI(TAG, "Attempting to download update from %s", config.url);
     esp_err_t ret = esp_https_ota(&ota_config);
+    
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "OTA Succeed, Rebooting...");
+        ESP_LOGI(TAG, "OTA Succeed, Rebooting…");
     } else {
         ESP_LOGE(TAG, "Firmware upgrade failed");
         OTA_Enable = 0;
-//        led_bit_disable(OTA_START_BIT);
+        
+        // 할당된 URL 메모리 해제!
+        free(url_ptr);
         vTaskDelete(xOTA_Handle);
     }
+
+    //동적 할당된 URL 메모리 해제!
+    free(url_ptr);
+
     while (1) {
-    	system_reset(REASON_OTA);
+        system_reset(REASON_OTA); //
     }
+
 }
 
 static void print_sha256(const uint8_t *image_hash, const char *label)
@@ -199,9 +208,17 @@ void ota_main(const char* URL)
         return;
     }
     esp_log_level_set("esp_https_ota", ESP_LOG_DEBUG);
-    static char URL_Buffer[200];
-    memset(URL_Buffer, 0, sizeof(URL_Buffer));
-    strncpy(URL_Buffer, URL, sizeof(URL_Buffer) - 1);
+    // static char URL_Buffer[200];
+    // memset(URL_Buffer, 0, sizeof(URL_Buffer));
+    // strncpy(URL_Buffer, URL, sizeof(URL_Buffer) - 1);
+
+    char *url_buf = strdup(URL); 
+    if (url_buf == NULL) { 
+        ESP_LOGE(TAG, "OTA URL 메모리 할당 실패."); 
+        return; 
+    }
+
+
     get_sha256_of_partitions();
 #if CONFIG_EXAMPLE_CONNECT_WIFI
     /* Ensure to disable any WiFi power save mode, this allows best throughput
@@ -215,8 +232,8 @@ void ota_main(const char* URL)
     if (xTaskCreatePinnedToCore(
             simple_ota_example_task,                  // 태스크 함수
             "ota_example_task",                // 태스크 이름
-            8192,       // 스택 크기
-            URL_Buffer,        // 파라미터
+            4096,       // 스택 크기
+            url_buf,        // 파라미터
             tskIDLE_PRIORITY + 3,      // 우선순위
             &xOTA_Handle,                  // 태스크 핸들
             1                          // ⭐ 코어 ID (1번 코어 = APP_CPU)

@@ -1,4 +1,4 @@
-# 1. main Æú´õ ¹Ù·Î ¾Æ·¡¿Í, ÇÏÀ§ Æú´õ(ble, wifi, mqtt, provisioning µî) ¾ÈÀÇ ¸ðµç .c ÆÄÀÏÀ» ÀÚµ¿À¸·Î ±Ü¾î¸ðÀ¾´Ï´Ù.
+# 1. main ï¿½ï¿½ï¿½ï¿½ ï¿½Ù·ï¿½ ï¿½Æ·ï¿½ï¿½ï¿½, ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½(ble, wifi, mqtt, provisioning ï¿½ï¿½) ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ .c ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Úµï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ü¾ï¿½ï¿½ï¿½ï¿½ï¿½Ï´ï¿½.
 file(GLOB_RECURSE SOURCES "*.c")
 
 if("${target}" STREQUAL "linux")
@@ -6,10 +6,10 @@ if("${target}" STREQUAL "linux")
 endif()
 
 
-# ÄÄÆ÷³ÍÆ® µî·Ï
+# ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½ï¿½
 idf_component_register(
     SRCS 
-        ${SOURCES} # ÀÌ·¸°Ô ÇÏ¸é »õ·Î Ãß°¡ µÇ´Â ÆÄÀÏÀÌ ÀÚµ¿ ÀÎ½Ä µÈ´Ù³×¿ä.
+        ${SOURCES} # ï¿½Ì·ï¿½ï¿½ï¿½ ï¿½Ï¸ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ß°ï¿½ ï¿½Ç´ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Úµï¿½ ï¿½Î½ï¿½ ï¿½È´Ù³×¿ï¿½.
     
     INCLUDE_DIRS
         "."
@@ -22,8 +22,8 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/config"
         "${CMAKE_CURRENT_LIST_DIR}/crypto"
 
-    # ºí·çÅõ½º, OTA, NVS flash¿¡ ´õÇØ 'driver'(GPIO¿ë)±îÁö ½Ï ´Ù ¸í½ÃÇÕ´Ï´Ù.
-    # ?? esp_https_ota.h ¿¡·¯¸¦ ÇØ°áÇÏ±â À§ÇØ ¿©±â¿¡ ¸í½ÃÀûÀ¸·Î µî·ÏÇÕ´Ï´Ù.
+    # ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½, OTA, NVS flashï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ 'driver'(GPIOï¿½ï¿½)ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
+    # ?? esp_https_ota.h ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ø°ï¿½ï¿½Ï±ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½â¿¡ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Õ´Ï´ï¿½.
     REQUIRES 
         freertos 
         esp_event 
@@ -54,6 +54,7 @@ idf_component_register(
         backoffAlgorithm
         esp_netif
         esp_driver_mcpwm
+        wifi_provisioning
 )
 
 # target_compile_definitions(${COMPONENT_LIB} PRIVATE

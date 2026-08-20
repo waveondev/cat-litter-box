@@ -1,8 +1,12 @@
 #include "main.h"
 
+#include "esp_bt.h"
+#include "nimble/nimble_port.h" // NimBLE ì‚¬ìš© ì‹œ
 static const char *TAG = "APP_MAIN";
+#define OTA_URL "https://evtago.s3.ap-northeast-2.amazonaws.com/loopoo.bin"
+extern void ota_main(const char *URL);
 
-// ÇÉ Á¤ÀÇ (ESP32-S3 ÇÏµå¿ş¾î¿¡ ¸Â°Ô ¼öÁ¤ °¡´É)
+// ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ (ESP32-S3 ï¿½Ïµï¿½ï¿½ï¿½î¿¡ ï¿½Â°ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
 #define UART1_TXD_PIN (GPIO_NUM_17)
 #define UART1_RXD_PIN (GPIO_NUM_18)
 
@@ -38,15 +42,17 @@ typedef struct {
 } RingBuffer;
 
 RingBuffer rx_ring;
-unsigned char rx_byte; // 1¹ÙÀÌÆ® ¼ö½Å ÀÎÅÍ·´Æ®¿ë º¯¼ö
+unsigned char rx_byte; // 1ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Í·ï¿½Æ®ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 char parse_buf[PARSE_BUF_SIZE];
 unsigned short parse_idx = 0;
 
 static unsigned int reset_reason = 0;
 
+volatile bool g_start_ota_flag = false;
+
 void RingBuffer_Push(unsigned char data) {
     unsigned short next = (rx_ring.head + 1) % RX_BUF_SIZE;
-    if (next != rx_ring.tail) { // ¹öÆÛ°¡ °¡µæ Â÷Áö ¾ÊÀº °æ¿ì¿¡¸¸ »ğÀÔ
+    if (next != rx_ring.tail) { // ï¿½ï¿½ï¿½Û°ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ì¿¡ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
         rx_ring.buffer[rx_ring.head] = data;
         rx_ring.head = next;
     }
@@ -54,11 +60,11 @@ void RingBuffer_Push(unsigned char data) {
 
 int RingBuffer_Pop(unsigned char *data) {
     if (rx_ring.head == rx_ring.tail) {
-        return 0; // ¹öÆÛ°¡ ºñ¾îÀÖÀ½
+        return 0; // ï¿½ï¿½ï¿½Û°ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     }
     *data = rx_ring.buffer[rx_ring.tail];
     rx_ring.tail = (rx_ring.tail + 1) % RX_BUF_SIZE;
-    return 1; // µ¥ÀÌÅÍ ÃßÃâ ¼º°ø
+    return 1; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 }
 
 static void Usage(void)
@@ -118,22 +124,22 @@ static void demo_synario(void *arg) {
 
 static void vTaskListCustom(void)
 {
-    // 1. ÇöÀç ½Ã½ºÅÛÀÇ ÃÑ ÅÂ½ºÅ© °³¼ö È®ÀÎ
+    // 1. ï¿½ï¿½ï¿½ï¿½ ï¿½Ã½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½Â½ï¿½Å© ï¿½ï¿½ï¿½ï¿½ È®ï¿½ï¿½
     UBaseType_t uxArraySize = uxTaskGetNumberOfTasks();
     
-    // ±¸Á¶Ã¼ ¹è¿­ µ¿Àû ÇÒ´ç
+    // ï¿½ï¿½ï¿½ï¿½Ã¼ ï¿½è¿­ ï¿½ï¿½ï¿½ï¿½ ï¿½Ò´ï¿½
     TaskStatus_t *pxTaskStatusArray = (TaskStatus_t *)malloc(uxArraySize * sizeof(TaskStatus_t));
 
     if (pxTaskStatusArray != NULL) {
-        // 2. ¸ğµç ÅÂ½ºÅ©ÀÇ ½Ã½ºÅÛ »óÅÂ Á¤º¸ °¡Á®¿À±â
+        // 2. ï¿½ï¿½ï¿½ ï¿½Â½ï¿½Å©ï¿½ï¿½ ï¿½Ã½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         uxArraySize = uxTaskGetSystemState(pxTaskStatusArray, uxArraySize, NULL);
 
-        // Çì´õ Ãâ·Â (¿äÃ»ÇÏ½Å ¾ç½Ä ¿À¸¥ÂÊ¿¡ Core Ãß°¡)
+        // ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ (ï¿½ï¿½Ã»ï¿½Ï½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ê¿ï¿½ Core ï¿½ß°ï¿½)
         printf("\nTask            State  Priority  Stack    #    Core\n");
         printf("====================================================\n");
 
         for (UBaseType_t x = 0; x < uxArraySize; x++) {
-            // »óÅÂ(State) ¹®ÀÚ º¯È¯
+            // ï¿½ï¿½ï¿½ï¿½(State) ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¯
             char state_char = '?';
             switch (pxTaskStatusArray[x].eCurrentState) {
                 case eRunning:   state_char = 'R'; break;
@@ -144,17 +150,17 @@ static void vTaskListCustom(void)
                 default: break;
             }
 
-            // Core ID ¹®ÀÚ¿­ º¯È¯ (°íÁ¤ ¾È µÊ = Any, °íÁ¤µÊ = Core 0 ¶Ç´Â 1)
-            char core_str[32]; // 32¹ÙÀÌÆ®·Î ³Ë³ËÇÏ°Ô º¯°æ
+            // Core ID ï¿½ï¿½ï¿½Ú¿ï¿½ ï¿½ï¿½È¯ (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ = Any, ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ = Core 0 ï¿½Ç´ï¿½ 1)
+            char core_str[32]; // 32ï¿½ï¿½ï¿½ï¿½Æ®ï¿½ï¿½ ï¿½Ë³ï¿½ï¿½Ï°ï¿½ ï¿½ï¿½ï¿½ï¿½
 
 			if (pxTaskStatusArray[x].xCoreID == tskNO_AFFINITY) {
 				snprintf(core_str, sizeof(core_str), "Any (0/1)");
 			} else {
-				// ÀÌÁ¦ ÄÄÆÄÀÏ·¯°¡ 32¹ÙÀÌÆ® °ø°£À» º¸°í ¾È½ÉÇÏ°í Åë°ú½ÃÅµ´Ï´Ù.
+				// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï·ï¿½ï¿½ï¿½ 32ï¿½ï¿½ï¿½ï¿½Æ® ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½È½ï¿½ï¿½Ï°ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Åµï¿½Ï´ï¿½.
 				snprintf(core_str, sizeof(core_str), "Core %d", (int)pxTaskStatusArray[x].xCoreID);
 			}
 
-            // ±âÁ¸ vTaskList¿Í ¿ÏÀüÈ÷ µ¿ÀÏÇÑ ³Êºñ¿Í Á¤·ÄÀ» À¯ÁöÇÏ¸ç Ãâ·Â
+            // ï¿½ï¿½ï¿½ï¿½ vTaskListï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Êºï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ï¸ï¿½ ï¿½ï¿½ï¿½
             printf("%-15s  %c       %u         %-7u  %-3u  %s\n",
                    pxTaskStatusArray[x].pcTaskName,
                    state_char,
@@ -165,7 +171,7 @@ static void vTaskListCustom(void)
         }
         printf("====================================================\n\n");
 
-        // ¸Ş¸ğ¸® ÇØÁ¦
+        // ï¿½Ş¸ï¿½ ï¿½ï¿½ï¿½ï¿½
         free(pxTaskStatusArray);
     }
 }
@@ -288,7 +294,7 @@ static int uart_parser(message_t *msg)
     
     while(RingBuffer_Pop(&ch)) 
     {
-        if (ch == '$') { // ½ÃÀÛ ¹®ÀÚ °¨Áö ½Ã ¹öÆÛ ÃÊ±âÈ­
+        if (ch == '$') { // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
             parse_idx = 0;
             return 0;
         }
@@ -296,14 +302,14 @@ static int uart_parser(message_t *msg)
         if (parse_idx < PARSE_BUF_SIZE - 1) {
             parse_buf[parse_idx++] = (char)ch;
             
-            // Á¾·á ¹®ÀÚ '\n' °¨Áö ½Ã ¸í·É¾î Ã³¸®
+            // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ '\n' ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½É¾ï¿½ Ã³ï¿½ï¿½
             if (ch == '\r'|| ch == '\n') {
-                parse_buf[parse_idx] = '\0'; // ¹®ÀÚ¿­ Á¾°á Ã³¸®
-                Process_Command(msg, parse_buf);  // Ã³¸® ÇÔ¼ö È£Ãâ
-                parse_idx = 0;               // ÆÄ¼­ ¹öÆÛ ÃÊ±âÈ­
+                parse_buf[parse_idx] = '\0'; // ï¿½ï¿½ï¿½Ú¿ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½
+                Process_Command(msg, parse_buf);  // Ã³ï¿½ï¿½ ï¿½Ô¼ï¿½ È£ï¿½ï¿½
+                parse_idx = 0;               // ï¿½Ä¼ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
             }
         } else {
-            // ¹öÆÛ ¿À¹öÇÃ·Î¿ì ¹æÁö¸¦ À§ÇÑ ÃÊ±âÈ­
+            // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Ã·Î¿ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
             parse_idx = 0;
         }
     }
@@ -311,7 +317,7 @@ static int uart_parser(message_t *msg)
 }
 
 void uart_bridge_init(void) {
-    // 1. UART0 ¼³Á¤ (±âº» ÇÉ »ç¿ë)
+    // 1. UART0 ï¿½ï¿½ï¿½ï¿½ (ï¿½âº» ï¿½ï¿½ ï¿½ï¿½ï¿½)
     uart_config_t uart0_config = {
         .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
@@ -322,7 +328,7 @@ void uart_bridge_init(void) {
     uart_param_config(UART_NUM_0, &uart0_config);
     uart_driver_install(UART_NUM_0, UART_BUF_SIZE * 2, 0, 0, NULL, 0);
 
-    // 2. UART1 ¼³Á¤ ¹× ÇÉ ÁöÁ¤
+    // 2. UART1 ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
     uart_config_t uart1_config = {
         .baud_rate = 115200,
         .data_bits = UART_DATA_8_BITS,
@@ -331,12 +337,12 @@ void uart_bridge_init(void) {
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
     };
     uart_param_config(UART_NUM_1, &uart1_config);
-    // UART1 Àü¿ë GPIO ÇÉ ¹ÙÀÎµù
+    // UART1 ï¿½ï¿½ï¿½ï¿½ GPIO ï¿½ï¿½ ï¿½ï¿½ï¿½Îµï¿½
     uart_set_pin(UART_NUM_1, UART1_TXD_PIN, UART1_RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     uart_driver_install(UART_NUM_1, UART_BUF_SIZE * 2, 0, 0, NULL, 0);
 }
 
-// UART1 -> UART0 Àü´Ş ÅÂ½ºÅ©
+// UART1 -> UART0 ï¿½ï¿½ï¿½ï¿½ ï¿½Â½ï¿½Å©
 void uart1_to_uart0_task(void *arg) {
     ESP_LOGI(TAG, "%s +", __func__);
 	int idx, ret;
@@ -352,7 +358,7 @@ void uart1_to_uart0_task(void *arg) {
         	ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
         }
 #else
-        // UART1 µ¥ÀÌÅÍ ÀĞ±â (ÃÖ´ë 20ms ´ë±â)
+        // UART1 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ğ±ï¿½ (ï¿½Ö´ï¿½ 20ms ï¿½ï¿½ï¿½)
         int len = uart_read_bytes(UART_NUM_1, data, UART_BUF_SIZE, 20 / portTICK_PERIOD_MS);
         if (len > 0) {
 //            uart_write_bytes(UART_NUM_0, (const char *) data, len);
@@ -393,7 +399,7 @@ void uart1_to_uart0_task(void *arg) {
     vTaskDelete(NULL);
 }
 
-// UART0 -> UART1 Àü´Ş ÅÂ½ºÅ©
+// UART0 -> UART1 ï¿½ï¿½ï¿½ï¿½ ï¿½Â½ï¿½Å©
 void uart0_to_uart1_task(void *arg) {
 	int i;
     unsigned char *data = (unsigned char *) malloc(UART_BUF_SIZE);
@@ -401,10 +407,10 @@ void uart0_to_uart1_task(void *arg) {
     
     ESP_LOGI(TAG, "%s +", __func__);
     while (1) {
-        // UART0 µ¥ÀÌÅÍ ÀĞ±â (ÃÖ´ë 20ms ´ë±â)
+        // UART0 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½Ğ±ï¿½ (ï¿½Ö´ï¿½ 20ms ï¿½ï¿½ï¿½)
         int len = uart_read_bytes(UART_NUM_0, data, UART_BUF_SIZE, 20 / portTICK_PERIOD_MS);
         if (len > 0) {
-            // ÀĞÀº µ¥ÀÌÅÍ¸¦ ±×´ë·Î UART1·Î Àü¼Û
+            // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½Í¸ï¿½ ï¿½×´ï¿½ï¿½ UART1ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
 //            uart_write_bytes(UART_NUM_1, (const char *) data, len);
 			ptr = data;
 			for(i=0;i<len;i++)
@@ -498,11 +504,11 @@ unsigned int get_freeheap_size(int line)
     heap_size = xPortGetFreeHeapSize();
 	if(last_heap != 0)
 	{
-		printf(">>  %d: used %d bytes free heap %d bytes, min ever free %d bytes\r\n"
-				, line
-				, last_heap - heap_size
-				, (int)heap_size
-				, (int)xPortGetMinimumEverFreeHeapSize());
+		// printf(">>  %d: used %d bytes free heap %d bytes, min ever free %d bytes\r\n"
+		// 		, line
+		// 		, last_heap - heap_size
+		// 		, (int)heap_size
+		// 		, (int)xPortGetMinimumEverFreeHeapSize());
 	}
 	else
 	{
@@ -612,6 +618,13 @@ void app_main(void) {
         if(get_aws_started())
         {
             ESP_LOGI(TAG, "provisioning finished !!");
+
+            //esp_bt_controller_disable();
+            //esp_bt_controller_deinit();
+            //esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+
+            ESP_LOGI(TAG, "í”„ë¡œë¹„ì €ë‹ ì™„ì „ ì¢…ë£Œ ì™„ë£Œ. í™•ë³´ëœ Free Heap: %d", xPortGetFreeHeapSize());
+
             break;
         }
     }
@@ -624,6 +637,40 @@ void app_main(void) {
 	    message_t msg;
 	    send_led_cmd_msg(&msg, LED_IDLE_CMD);
 	}
+
+    while(1)
+    {
+        get_freeheap_size((int)__LINE__);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        // í”Œë˜ê·¸ ê°ì§€!
+        if (g_start_ota_flag == true) 
+        {
+            g_start_ota_flag = false; // ì¤‘ë³µ ì‹¤í–‰ ë°©ì§€
+            
+            ESP_LOGI(TAG, "==== NimBLE ì•ˆì „ ì¢…ë£Œ ë° ë©”ëª¨ë¦¬ í•´ì œ ì‹œì‘ ====");
+
+            // 1. NimBLE í˜¸ìŠ¤íŠ¸ ìŠ¤íƒ ì¤‘ì§€ (ìŠ¤ë§ˆíŠ¸í°ê³¼ì˜ ì—°ê²° ë° Notify ì‘ì—…ì„ ì•ˆì „í•˜ê²Œ ì •ë¦¬)
+            if (nimble_port_stop() == 0) {
+                nimble_port_deinit();
+            }
+
+            // 2. í•˜ë“œì›¨ì–´ ë“œë¼ì´ë²„ ì•ˆì „ ì •ì§€
+            esp_bt_controller_disable();
+            esp_bt_controller_deinit();
+
+            // 3. ğŸ”¥ BLE ì»¨íŠ¸ë¡¤ëŸ¬ ë©”ëª¨ë¦¬ ì™„ì „íˆ ë°˜ë‚©
+            esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+
+            vTaskDelay(pdMS_TO_TICKS(1000)); // ì •ë¦¬ ì™„ë£Œ ëŒ€ê¸°
+
+            ESP_LOGI(TAG, "==== ë¨ í™•ë³´ ì™„ë£Œ! ì´ì œ OTA íƒœìŠ¤í¬ë¥¼ ìƒì„±í•©ë‹ˆë‹¤ ====");
+
+            // 2. OTA ì‹¤í–‰
+            ota_main(OTA_URL);
+        }
+    }
+
 	while(1)
 	{
         get_freeheap_size((int)__LINE__);

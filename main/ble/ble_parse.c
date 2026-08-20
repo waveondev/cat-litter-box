@@ -16,6 +16,7 @@
 
 uint8_t* get_ble_session_key(void);
 extern uint16_t g_ble_max_payload; // ble로 보낼 수 있는 MTU 사이즈 저장 변수
+extern volatile bool g_start_ota_flag;
 
 /**
  * @brief 암호화된 cJSON data 객체를 받아 복호화된 평문 문자열을 반환하는 함수
@@ -342,10 +343,18 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
         wifi_scan_start();
         return;
     }
+
+    buf[strcspn(buf, "\r\n")] = 0;
+    printf("cmd   : %s\n", OTA_URL);
     if(strcmp(buf, "OTA") == 0)
     {
-        ota_main(OTA_URL);
+        ESP_LOGE("ble_parse", "OTA 명령 수신! 메인 루프에 OTA 실행을 요청합니다.");
+
+        //ota_main(OTA_URL);
+        g_start_ota_flag = true;  // OTA 함수 직접 실행 대신 플래그만 ON!
         return;
+
+        //return;
     }
 
 
