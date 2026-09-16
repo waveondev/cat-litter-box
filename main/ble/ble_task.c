@@ -49,6 +49,7 @@ static int ble_spp_server_gap_event(struct ble_gap_event *event, void *arg);
 
 static uint16_t current_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool is_phone_connected = false;
+static bool tracker_found_f = false;	// vincent
 static QueueHandle_t ble_rx_queue = NULL;
 static QueueHandle_t ble_tx_queue = NULL; // 이름을 수신용(rx)에서 송신용(tx) 개념으로
 
@@ -164,7 +165,7 @@ static int ble_spp_server_gap_event(struct ble_gap_event *event, void *arg)
 
         
         current_conn_handle = event->connect.conn_handle;
-        //MotionSetTimer(is_phone_connected); by.jeon 이 타이머를 왜 돌리는거죠?
+        MotionSetTimer(is_phone_connected); //by.jeon 이 타이머를 왜 돌리는거죠?
         if (event->connect.status == 0) {
             if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
                 ble_spp_server_print_conn_desc(&desc);
@@ -239,9 +240,10 @@ static int ble_spp_server_gap_event(struct ble_gap_event *event, void *arg)
         //    * 만약 -55보다 신호가 쌘 것(-50, -40 dBm 등)을 원하신 거라면 `>`로 부호를 바꿔주세요.
         // -----------------------------------------------------------------
         if (event->disc.rssi < app_config->gate_way_rssi_th) {
+        	tracker_found_f = false;
             return 0; // -55보다 큰 신호는 여기서 즉시 차단
         }
-
+		tracker_found_f = true;
         // -----------------------------------------------------------------
         // 2. ⚡️ 임시 이름 확인 및 캐시 검색을 위한 준비
         //    * BLE 스캔 패킷 특성상 이름이 항상 들어오지 않으므로, 
@@ -610,7 +612,20 @@ static void ble_tx_processing_task(void *pvParameters)
                     ble_server_send_notify(current_conn_handle, &msg.data[offset], send_len);
                     printf("[TX 태스크] %d 바이트 중 %d 바이트 쪼개서 전송 완료 (offset: %d)\n", msg.len, send_len, offset);
                     
+                    // ⬇️ 수정된 부분: 텍스트 출력 대신 16진수(Hex) 데이터 출력 ⬇️
+                    printf("전송된 데이터(Hex): ");
+                    for (int i = 0; i < send_len; i++) {
+                        printf("%02X ", msg.data[offset + i]);
+                    }
+                    printf("\n");
+                    // --------------------------------------------------
+                    
                     offset += send_len;
+                    
+                    if (offset == msg.len) {
+                        printf("완료!!!:offset %d, msg.len %d \n", offset, msg.len);
+                        break;  // 즉시 while (offset < msg.len) 루프를 탈출함
+                    }
                     
                     // 연속 전송 시 BLE 컨트롤러 큐 오버플로우 방지 (필수)
                     vTaskDelay(pdMS_TO_TICKS(15));
@@ -755,4 +770,9 @@ void ble_task_init(void)
     }
 
     nimble_port_freertos_init(ble_spp_server_host_task);
+}
+
+bool get_tracker_found(void)
+{
+	return tracker_found_f;
 }

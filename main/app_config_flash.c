@@ -10,66 +10,46 @@ static const char *TAG = __FILE__;
 
 app_config_t app_config = 
 {
-	.MIN_VALID_WASTE_RAW = 50, 	// unit : 0.1 g
-	.CLUMPING_WAIT_MIN = 10,	// unit : minute
-	.JAM_CURRENT_LIMIT = 1200,	// unit : mA
-	.CAT_ENTRY_MIN_WEIGHT = 500,// unit : g
-	.WASTE_TYPE_RATIO_TH = 20,	// unit : 0.1g
-	.EFFECTIVE_DWELL_TIME = 5,	// unit : second
+	.MIN_VALID_WASTE_RAW = 50, 	
+	.CLUMPING_WAIT_MIN = 10,	
+    // ê¸°ì¤€ ì „ì••(3.3V)ì˜ 30%ì— í•´ë‹¹í•˜ëŠ” ì•½ 495mAë¡œ ì°¨ë‹¨ ì„ê³„ì¹˜ ë³€ê²½
+	.m1_jam_current = 495,
+	.m2_jam_current = 495,
+	.m3_jam_current = 495,
+	.m4_jam_current = 495,
+	.m5_jam_current = 495,
+
+	.CAT_ENTRY_MIN_WEIGHT = 500,
+	.WASTE_TYPE_RATIO_TH = 20,	
+	.EFFECTIVE_DWELL_TIME = 5,	
 
 	.reset_reason = REASON_NORMAL,
-    .gate_way_rssi_th = -55,
+    .gate_way_rssi_th = -85,
     .tof_sense_threshold_l = 250,
     .tof_sense_threshold_r = 250,
     .motion_data_time = 1800,
 };
 
-app_wifi_config_t wifi_config = 
-{
-   .conn_ssid = "",
-   .conn_password = ""
-};
-
-app_ble_config_t ble_config = 
-{
-   .ble_device_name = ""
-};
-
+app_wifi_config_t wifi_config = { .conn_ssid = "", .conn_password = "" };
+app_ble_config_t ble_config = { .ble_device_name = "" };
 
 static bool app_save_flag = false;
 static bool wifi_save_flag = false;
 static bool ble_save_flag = false;
 static bool motor_save_flag = false;
 static uint32_t motor_save_time = 0;
-void app_nvs_save_set(void)
-{
-    app_save_flag = true;
-}
-void wifi_nvs_save_set(void)
-{
-    wifi_save_flag = true;
-}
-void ble_nvs_save_set(void)
-{
-    ble_save_flag = true;
-}
-void motor_nvs_save_set(void)
-{
-    motor_save_flag = true;
-}
+
+void app_nvs_save_set(void) { app_save_flag = true; }
+void wifi_nvs_save_set(void) { wifi_save_flag = true; }
+void ble_nvs_save_set(void) { ble_save_flag = true; }
+void motor_nvs_save_set(void) { motor_save_flag = true; }
+
 void reset_all_nvs_data(void)
 {
-    ESP_LOGW("NVS", "NVS ¿µ¿ªÀ» Æ÷¸Ë(ÃÊ±âÈ­)ÇÕ´Ï´Ù...");
-    
-    // ?? ÀÌ ÇÔ¼ö¸¦ ½ÇÇàÇÏ¸é NVS ½ºÅä¸®Áö ÀüÃ¼°¡ ½Ï ´Ù Æ÷¸ËµË´Ï´Ù.
     esp_err_t err = nvs_flash_erase();
-    
     if (err == ESP_OK) {
-        ESP_LOGI("NVS", "Æ÷¸Ë ¿Ï·á! º¯°æ»çÇ×À» Àû¿ëÇÏ±â À§ÇØ ÀçºÎÆÃÇÕ´Ï´Ù.");
-        esp_restart(); // ?? Áß¿ä: ±ú²ıÇØÁø NVS ±¸Á¶¸¦ »õ·Î ¿Ã¸®±â À§ÇØ ÀçºÎÆÃ ÇÊ¼ö
-    } else {
-        ESP_LOGE("NVS", "NVS Æ÷¸Ë ½ÇÆĞ: %s", esp_err_to_name(err));
-    }
+        esp_restart(); 
+    } 
 }
 
 void dump_all_configurations(void)
@@ -77,305 +57,128 @@ void dump_all_configurations(void)
     ESP_LOGI(TAG, "==================================================");
     ESP_LOGI(TAG, "         [SYSTEM CONFIGURATION DUMP]              ");
     ESP_LOGI(TAG, "==================================================");
-
-    // 1. APP ¼³Á¤ Ãâ·Â
-    ESP_LOGI(TAG, "[APP CONFIG]");
-	ESP_LOGI(TAG, "  - MIN_VALID_WASTE_RAW  : %ld g", app_config.MIN_VALID_WASTE_RAW);
-    ESP_LOGI(TAG, "  - CLUMPING_WAIT_MIN    : %ld min", app_config.CLUMPING_WAIT_MIN);
-    ESP_LOGI(TAG, "  - JAM_CURRENT_LIMIT    : %ld mA", app_config.JAM_CURRENT_LIMIT);
-    ESP_LOGI(TAG, "  - CAT_ENTRY_MIN_WEIGHT : %ld g", app_config.CAT_ENTRY_MIN_WEIGHT);
-    ESP_LOGI(TAG, "  - WASTE_TYPE_RATIO_TH  : %ld ", app_config.WASTE_TYPE_RATIO_TH);
-    ESP_LOGI(TAG, "  - EFFECTIVE_DWELL_TIME : %ld sec", app_config.EFFECTIVE_DWELL_TIME);
-    
-    ESP_LOGI(TAG, "  - Gateway RSSI Thr     : %ld dBm", app_config.gate_way_rssi_th);
-    ESP_LOGI(TAG, "  - tof_sense_threshold_l: %ld", app_config.tof_sense_threshold_l);
-    ESP_LOGI(TAG, "  - tof_sense_threshold_r: %ld", app_config.tof_sense_threshold_r);
-    ESP_LOGI(TAG, "  - motion_data_time     : %ld", app_config.motion_data_time);
-    ESP_LOGI(TAG, "--------------------------------------------------");
-
-    // 2. Wi-Fi ¼³Á¤ Ãâ·Â
-    ESP_LOGI(TAG, "[WIFI CONFIG]");
-    // SSID³ª PASSWORD°¡ ºñ¾îÀÖÀ¸¸é [EMPTY]·Î ¼¾½ºÀÖ°Ô Ç¥±â
-    ESP_LOGI(TAG, "  - Wi-Fi SSID           : %s", (wifi_config.conn_ssid[0] == '\0') ? "[EMPTY]" : (char*)wifi_config.conn_ssid);
-    ESP_LOGI(TAG, "  - Wi-Fi Password       : %s", (wifi_config.conn_password[0] == '\0') ? "[EMPTY]" : "********"); // º¸¾È»ó º°Ç¥ Ç¥±â (¿øÇÏ½Ã¸é %s·Î »ıÀÚ·Î ±î¼Åµµ µË´Ï´Ù)
-    ESP_LOGI(TAG, "--------------------------------------------------");
-
-    // 3. BLE ¼³Á¤ Ãâ·Â
-    ESP_LOGI(TAG, "[BLE CONFIG]");
-    ESP_LOGI(TAG, "  - BLE Device Name      : %s", (ble_config.ble_device_name[0] == '\0') ? "[EMPTY]" : (char*)ble_config.ble_device_name);
-    
-    ESP_LOGI(TAG, "==================================================");
 }
 
-app_config_t* get_app_config(void)
-{
-    return &app_config;
-}
+app_config_t* get_app_config(void) { return &app_config; }
+app_wifi_config_t* get_wifi_config(void) { return &wifi_config; }
+app_ble_config_t* get_ble_config(void) { return &ble_config; }
+uint32_t* get_motor_time(void) { return &motor_save_time; }
 
-app_wifi_config_t* get_wifi_config(void)
-{
-    return &wifi_config;
-}
-
-app_ble_config_t* get_ble_config(void)
-{
-    return &ble_config;
-}
-uint32_t* get_motor_time(void)
-{
-    return &motor_save_time;
-}
 void erase_app_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     memset(&app_config,0,sizeof(app_config));
     write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config));
 }
 
 void load_app_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
-    
     if (err != ESP_OK) {
-        // 2. ¸¸¾à ÃÖÃÊ ºÎÆÃÀÌ¶ó µ¥ÀÌÅÍ°¡ ¾ø´Ù¸é ±âº»°ª(Default) ¼¼ÆÃ
-        ESP_LOGI(TAG,"[CONFIG] ÀúÀåµÈ ¼³Á¤ÀÌ ¾ø¾î ±âº»°ªÀ» »ı¼ºÇÕ´Ï´Ù.\r\n");
-                
-        // ±âº»°ª ¼¼ÆÃ ÈÄ NVS¿¡ ÃÖÃÊ·Î ±¸¿öµÎ±â
         write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
-    } else {
-//        ESP_LOGI(TAG,"[CONFIG] NVS¿¡¼­ ½Ã½ºÅÛ ¼³Á¤ ·Îµå ¼º°ø!Àú¿ï Offset: %d)\r\n", 
-//                          app_config.hx1_offset);
-		ESP_LOGI(TAG,"[CONFIG] ¼³Á¤ load ¼º°ø \r\n");
-    }
+    } 
 }
 
-// °ªÀÌ ¹Ù²ğ ¶§¸¶´Ù È£ÃâÇØ ÁÙ ÀúÀå ÇÔ¼ö
 static void save_app_configuration(void)
 {
     write_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &app_config, sizeof(app_config_t));
-// 2. °ËÁõÀ» À§ÇØ NVS¿¡¼­ µ¥ÀÌÅÍ¸¦ ´Ù½Ã ÀĞ¾î¿Ã ÀÓ½Ã ±×¸© »ı¼º
-    app_config_t temp_cfg;
-    memset(&temp_cfg, 0, sizeof(app_config_t)); // 0À¸·Î ±ú²ıÇÏ°Ô Ã»¼Ò
-
-    // 3. NVS¿¡¼­ ¹æ±İ ÀúÀåÇÑ °ªÀ» ´Ù½Ã ·Îµå(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_CONFIGURATION, &temp_cfg, sizeof(app_config_t));
-
-    if (err == ESP_OK) {
-        // 4. memcmp·Î ¿øº»(app_config)°ú NVS¿¡¼­ ÀĞ¾î¿Â °ª(temp_cfg)À» ºñ±³
-        // µÎ ¸Ş¸ğ¸® ºí·ÏÀÌ 100% ÀÏÄ¡ÇÏ¸é 0À» ¸®ÅÏÇÕ´Ï´Ù.
-        if (memcmp(&app_config, &temp_cfg, sizeof(app_config_t)) == 0) {
-            ESP_LOGI(TAG, "[CONFIG] NVS µ¥ÀÌÅÍ °ËÁõ ¼º°ø! ÀúÀåµÈ °ªÀÌ ¿øº»°ú 100%% ÀÏÄ¡ÇÕ´Ï´Ù.");
-        } else {
-            // ÇÃ·¡½Ã ¸Ş¸ğ¸® ¹°¸®Àû ¼Õ»óÀÌ³ª ¼½ÅÍ ¿À·ù ½Ã °¨ÁöµÊ
-            ESP_LOGE(TAG, "[CONFIG] ?? NVS µ¥ÀÌÅÍ °ËÁõ ½ÇÆĞ! ÀúÀåµÈ °ªÀÌ ¿øº»°ú ÀÏÄ¡ÇÏÁö ¾Ê½À´Ï´Ù!");
-        }
-    } else {
-        ESP_LOGE(TAG, "[CONFIG] °ËÁõÀ» À§ÇØ µ¥ÀÌÅÍ¸¦ ÀĞ¾î¿À´Â Áß ¿¡·¯ ¹ß»ı (%s)", esp_err_to_name(err));
-    }
 }
 
 void erase_wifi_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     memset(&wifi_config,0,sizeof(wifi_config));
-
     write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(wifi_config));
 }
+
 void load_wifi_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
-    
     if (err != ESP_OK) {
-        // 2. ¸¸¾à ÃÖÃÊ ºÎÆÃÀÌ¶ó µ¥ÀÌÅÍ°¡ ¾ø´Ù¸é ±âº»°ª(Default) ¼¼ÆÃ
-        ESP_LOGI(TAG,"[WIFI] ÀúÀåµÈ ¼³Á¤ÀÌ ¾ø¾î ±âº»°ªÀ» »ı¼ºÇÕ´Ï´Ù.\r\n");
-                
-        // ±âº»°ª ¼¼ÆÃ ÈÄ NVS¿¡ ÃÖÃÊ·Î ±¸¿öµÎ±â
         write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
-    } else {
-        ESP_LOGI(TAG,"[WIFI] NVS¿¡¼­ ½Ã½ºÅÛ ¼³Á¤ ·Îµå ¼º°ø! (ssid = %s, pass = %s)\r\n", 
-                          wifi_config.conn_ssid, wifi_config.conn_password);
-    }
+    } 
 }
 
-// °ªÀÌ ¹Ù²ğ ¶§¸¶´Ù È£ÃâÇØ ÁÙ ÀúÀå ÇÔ¼ö
 static void save_wifi_configuration(void)
 {
     write_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &wifi_config, sizeof(app_wifi_config_t));
-// 2. °ËÁõÀ» À§ÇØ NVS¿¡¼­ µ¥ÀÌÅÍ¸¦ ´Ù½Ã ÀĞ¾î¿Ã ÀÓ½Ã ±×¸© »ı¼º
-    app_wifi_config_t temp_cfg;
-    memset(&temp_cfg, 0, sizeof(app_wifi_config_t)); // 0À¸·Î ±ú²ıÇÏ°Ô Ã»¼Ò
-
-    // 3. NVS¿¡¼­ ¹æ±İ ÀúÀåÇÑ °ªÀ» ´Ù½Ã ·Îµå(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_WIFI_CONFIG, &temp_cfg, sizeof(app_wifi_config_t));
-
-    if (err == ESP_OK) {
-        // 4. memcmp·Î ¿øº»(wifi_config)°ú NVS¿¡¼­ ÀĞ¾î¿Â °ª(temp_cfg)À» ºñ±³
-        // µÎ ¸Ş¸ğ¸® ºí·ÏÀÌ 100% ÀÏÄ¡ÇÏ¸é 0À» ¸®ÅÏÇÕ´Ï´Ù.
-        if (memcmp(&wifi_config, &temp_cfg, sizeof(app_wifi_config_t)) == 0) {
-            ESP_LOGI(TAG, "[WIFI] NVS µ¥ÀÌÅÍ °ËÁõ ¼º°ø! ÀúÀåµÈ °ªÀÌ ¿øº»°ú 100%% ÀÏÄ¡ÇÕ´Ï´Ù.");
-            ESP_LOGI(TAG, "[WIFI] ·ÎµåµÈ SSID: %s", temp_cfg.conn_ssid);
-        } else {
-            // ÇÃ·¡½Ã ¸Ş¸ğ¸® ¼½ÅÍ ºÒ·®ÀÌ³ª ¸¶½ºÅ· ¿À·ù ½Ã °¨ÁöµÊ
-            ESP_LOGE(TAG, "[WIFI] ?? NVS µ¥ÀÌÅÍ °ËÁõ ½ÇÆĞ! ÀúÀåµÈ °ªÀÌ ¿øº»°ú ÀÏÄ¡ÇÏÁö ¾Ê½À´Ï´Ù!");
-        }
-    } else {
-        ESP_LOGE(TAG, "[WIFI] °ËÁõÀ» À§ÇØ µ¥ÀÌÅÍ¸¦ ÀĞ¾î¿À´Â Áß ¿¡·¯ ¹ß»ı (%s)", esp_err_to_name(err));
-    }
 }
-
 
 void erase_ble_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     memset(&ble_config,0,sizeof(ble_config));
-
     write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(ble_config));
 }
+
 void load_ble_configuration(void)
 {
-    // 1. NVS¿¡¼­ ½Ã½ºÅÛ ±¸Á¶Ã¼ ÅëÂ°·Î ÀĞ¾î¿À±â ½Ãµµ
     esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
-    
     if (err != ESP_OK) {
-        // 2. ¸¸¾à ÃÖÃÊ ºÎÆÃÀÌ¶ó µ¥ÀÌÅÍ°¡ ¾ø´Ù¸é ±âº»°ª(Default) ¼¼ÆÃ
-        ESP_LOGI(TAG,"[BLE] ÀúÀåµÈ ¼³Á¤ÀÌ ¾ø¾î ±âº»°ªÀ» »ı¼ºÇÕ´Ï´Ù.\r\n");
-                
-        // ±âº»°ª ¼¼ÆÃ ÈÄ NVS¿¡ ÃÖÃÊ·Î ±¸¿öµÎ±â
         write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
-    } else {
-        ESP_LOGI(TAG,"[BLE] NVS¿¡¼­ ½Ã½ºÅÛ ¼³Á¤ ·Îµå ¼º°ø! (device name = %s)\r\n", 
-                          ble_config.ble_device_name);
-    }
+    } 
 }
 
-// °ªÀÌ ¹Ù²ğ ¶§¸¶´Ù È£ÃâÇØ ÁÙ ÀúÀå ÇÔ¼ö
 static void save_ble_configuration(void)
 {
     write_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &ble_config, sizeof(app_ble_config_t));
-// 2. °ËÁõÀ» À§ÇØ NVS¿¡¼­ ¹æ±İ ÀúÀåÇÑ °ªÀ» ´Ù½Ã ÀĞ¾î¿Ã ÀÓ½Ã ±×¸© »ı¼º
-    app_ble_config_t temp_cfg;
-    memset(&temp_cfg, 0, sizeof(app_ble_config_t)); // ±ú²ıÇÏ°Ô Ã»¼Ò
-
-    // 3. NVS¿¡¼­ µ¥ÀÌÅÍ¸¦ ´Ù½Ã ¿ªÀ¸·Î ·Îµå(Load)
-    esp_err_t err = read_nvs_blob(APP_NAMESPACE, APP_KEY_BLE_CONFIG, &temp_cfg, sizeof(app_ble_config_t));
-
-    if (err == ESP_OK) {
-        // 4. ?? memcmp·Î ¿øº»(ble_config)°ú ÀĞ¾î¿Â °Í(temp_cfg)À» Å©±â¸¸Å­ ºñ±³
-        // memcmp´Â µÎ ¸Ş¸ğ¸®°¡ ¿ÏÀüÈ÷ ÀÏÄ¡ÇÏ¸é '0'À» ¹İÈ¯ÇÕ´Ï´Ù.
-        if (memcmp(&ble_config, &temp_cfg, sizeof(app_ble_config_t)) == 0) {
-            ESP_LOGI(TAG, "[BLE] NVS µ¥ÀÌÅÍ °ËÁõ ¼º°ø! ÀĞ¾î¿Â °ªÀÌ ¿øº»°ú 100%% ÀÏÄ¡ÇÕ´Ï´Ù.");
-            ESP_LOGI(TAG, "[BLE] ·ÎµåµÈ ÀÌ¸§: %s", temp_cfg.ble_device_name);
-        } else {
-            // ¸Ş¸ğ¸®°¡ ÀÏÄ¡ÇÏÁö ¾Ê´Â °æ¿ì (´ë°³ ÀÌ·± ÀÏÀº °ÅÀÇ ¾øÁö¸¸, ÇÃ·¡½Ã ºÒ·® µîÀÇ ÀÌ½´ Ã¼Å©¿ë)
-            ESP_LOGE(TAG, "[BLE] ?? NVS µ¥ÀÌÅÍ °ËÁõ ½ÇÆĞ! ÀúÀåµÈ °ªÀÌ ¿øº»°ú ´Ù¸¨´Ï´Ù!");
-        }
-    } else {
-        ESP_LOGE(TAG, "[BLE] °ËÁõÀ» À§ÇØ ´Ù½Ã ÀĞ¾î¿À´Â °úÁ¤¿¡¼­ ¿¡·¯ ¹ß»ı (%s)", esp_err_to_name(err));
-    }
 }
-
 
 void load_motor_time(void)
 {
-    // 3. NVS¿¡¼­ µ¥ÀÌÅÍ¸¦ ´Ù½Ã ¿ªÀ¸·Î ·Îµå(Load)
     esp_err_t err = read_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, &motor_save_time);
-
     if (err != ESP_OK) {
-        // 2. ¸¸¾à ÃÖÃÊ ºÎÆÃÀÌ¶ó µ¥ÀÌÅÍ°¡ ¾ø´Ù¸é ±âº»°ª(Default) ¼¼ÆÃ
-        ESP_LOGI(TAG,"[MOTOR] ÀúÀåµÈ ¼³Á¤ÀÌ ¾ø¾î ±âº»°ªÀ» »ı¼ºÇÕ´Ï´Ù.\r\n");
-                
-        // ±âº»°ª ¼¼ÆÃ ÈÄ NVS¿¡ ÃÖÃÊ·Î ±¸¿öµÎ±â
         write_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, motor_save_time);
-    } else {
-        ESP_LOGI(TAG,"[MOTOR] NVS¿¡¼­ ½Ã½ºÅÛ ¼³Á¤ ·Îµå ¼º°ø! (motor_save_time = %d)\r\n", 
-                          motor_save_time);
-    }
+    } 
 }
+
 static void save_motor_time(void)
 {
     write_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, motor_save_time);
-// 2. °ËÁõÀ» À§ÇØ NVS¿¡¼­ ¹æ±İ ÀúÀåÇÑ °ªÀ» ´Ù½Ã ÀĞ¾î¿Ã ÀÓ½Ã ±×¸© »ı¼º
-    uint32_t temp_cfg = 0xffffffff;
-
-    // 3. NVS¿¡¼­ µ¥ÀÌÅÍ¸¦ ´Ù½Ã ¿ªÀ¸·Î ·Îµå(Load)
-    esp_err_t err = read_nvs_uint(APP_NAMESPACE, APP_KEY_MOTOR_TIME, &temp_cfg);
-
-    if (err == ESP_OK) {
-        // 4. ?? memcmp·Î ¿øº»(ble_config)°ú ÀĞ¾î¿Â °Í(temp_cfg)À» Å©±â¸¸Å­ ºñ±³
-        // memcmp´Â µÎ ¸Ş¸ğ¸®°¡ ¿ÏÀüÈ÷ ÀÏÄ¡ÇÏ¸é '0'À» ¹İÈ¯ÇÕ´Ï´Ù.
-        if (temp_cfg == motor_save_time) {
-            ESP_LOGI(TAG, "[BLE] NVS µ¥ÀÌÅÍ °ËÁõ ¼º°ø! ÀĞ¾î¿Â °ªÀÌ ¿øº»°ú 100%% ÀÏÄ¡ÇÕ´Ï´Ù.");
-            ESP_LOGI(TAG, "[BLE] ·ÎµåµÈ ÀÌ¸§: %d", motor_save_time);
-        } else {
-            // ¸Ş¸ğ¸®°¡ ÀÏÄ¡ÇÏÁö ¾Ê´Â °æ¿ì (´ë°³ ÀÌ·± ÀÏÀº °ÅÀÇ ¾øÁö¸¸, ÇÃ·¡½Ã ºÒ·® µîÀÇ ÀÌ½´ Ã¼Å©¿ë)
-            ESP_LOGE(TAG, "[BLE] ?? NVS µ¥ÀÌÅÍ °ËÁõ ½ÇÆĞ! ÀúÀåµÈ °ªÀÌ ¿øº»°ú ´Ù¸¨´Ï´Ù!");
-        }
-    } else {
-        ESP_LOGE(TAG, "[BLE] °ËÁõÀ» À§ÇØ ´Ù½Ã ÀĞ¾î¿À´Â °úÁ¤¿¡¼­ ¿¡·¯ ¹ß»ı (%s)", esp_err_to_name(err));
-    }
 }
-
 
 #define FLASH_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
 
 static void flash_task(void *pvParameter)
 {
-    ESP_LOGI(TAG, "Starting flash_task ");
-
     while (1) {
-        if(app_save_flag)
-        {
-            app_save_flag = false;
-            save_app_configuration();
-        }
-        if(wifi_save_flag)
-        {
-            wifi_save_flag = false;
-            save_wifi_configuration();
-        }
-        if(ble_save_flag)
-        {
-            ble_save_flag = false;
-            save_ble_configuration();
-        }
-        if(motor_save_flag)
-        {
-            motor_save_flag = false;
-            save_motor_time();
-        }
+        if(app_save_flag) { app_save_flag = false; save_app_configuration(); }
+        if(wifi_save_flag) { wifi_save_flag = false; save_wifi_configuration(); }
+        if(ble_save_flag) { ble_save_flag = false; save_ble_configuration(); }
+        if(motor_save_flag) { motor_save_flag = false; save_motor_time(); }
         
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
-
 void NVS_Flash_init(void)
 {
     TaskHandle_t xHandle = NULL;
     static uint8_t ucParameterToPass;
-    // xTaskCreate ´ë½Å xTaskCreatePinnedToCore¸¦ »ç¿ëÇÕ´Ï´Ù.
-    if (xTaskCreatePinnedToCore(
-            flash_task,                  // ÅÂ½ºÅ© ÇÔ¼ö
-            "flash_task",                // ÅÂ½ºÅ© ÀÌ¸§
-            FLASH_TASK_STACK_SIZE,       // ½ºÅÃ Å©±â
-            &ucParameterToPass,        // ÆÄ¶ó¹ÌÅÍ
-            tskIDLE_PRIORITY + 1,      // ¿ì¼±¼øÀ§
-            &xHandle,                  // ÅÂ½ºÅ© ÇÚµé
-            1                          // ? ÄÚ¾î ID (1¹ø ÄÚ¾î = APP_CPU)
-        ) != pdPASS) {                 // pdTRUE ´ë½Å pdPASS¸¦ ¾²´Â °ÍÀÌ FreeRTOS °ü·ÊÀÔ´Ï´Ù.
-        
-        ESP_LOGE(TAG, "Error creating Button_task on Core 1");
-    }
+    xTaskCreatePinnedToCore(
+            flash_task, "flash_task", FLASH_TASK_STACK_SIZE,       
+            &ucParameterToPass, tskIDLE_PRIORITY + 1, &xHandle, 1);                 
+            
     load_app_configuration();
     load_wifi_configuration();
     load_ble_configuration();
     load_motor_time();
     dump_all_configurations();
-    
 }
 
+void save_lc_calibration_to_nvs(int state, int *offsets)
+{
+    char nvs_key[16];
+    snprintf(nvs_key, sizeof(nvs_key), "lc_cal_%d", state);
+    write_nvs_blob(APP_NAMESPACE, nvs_key, offsets, sizeof(int) * 4);
+    ESP_LOGI("NVS_LC", "ìƒíƒœ %d ë¡œë“œì…€ ì˜ì  ë°ì´í„° ì €ì¥ ì™„ë£Œ", state);
+}
 
-
-
+void load_lc_calibration_from_nvs(int state, int *offsets)
+{
+    char nvs_key[16];
+    snprintf(nvs_key, sizeof(nvs_key), "lc_cal_%d", state);
+    esp_err_t err = read_nvs_blob(APP_NAMESPACE, nvs_key, offsets, sizeof(int) * 4);
+    if (err == ESP_OK) {
+        ESP_LOGI("NVS_LC", "ìƒíƒœ %d ë¡œë“œì…€ ì˜ì  ë¡œë“œ ì„±ê³µ!", state);
+    } else {
+        ESP_LOGW("NVS_LC", "ìƒíƒœ %d ë¡œë“œì…€ ì €ì¥ ë°ì´í„° ì—†ìŒ.", state);
+    }
+}

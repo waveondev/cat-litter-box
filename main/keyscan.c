@@ -50,17 +50,14 @@ static void key_polling_task(void *arg)
     ESP_LOGI(TAG, "%s +", __func__);
 
     while (1) {
-        // 20ms 주기로 상태 체크 (소프트웨어 디바운싱 효과)
         vTaskDelay(pdMS_TO_TICKS(20));
 
-        int64_t current_time = esp_timer_get_time() / 1000; // 현재 시간을 ms 단위로 가져옴
+        int64_t current_time = esp_timer_get_time() / 1000;
 
         for (int i = 0; i < num_keys; i++) {
-            // Low Active: 버튼이 눌리면 레벨이 0(Low)이 됨
             bool current_level = gpio_get_level(keys[i].pin) == 0;
 
             if (current_level) {
-                // 처음 눌린 경우
                 if (!keys[i].is_pressed) {
                     keys[i].is_pressed = true;
                     keys[i].press_start_time = current_time;
@@ -69,10 +66,7 @@ static void key_polling_task(void *arg)
                     keys[i].event_triggered_10s = false;
                     ESP_LOGD(TAG, "GPIO %d Pressed", keys[i].pin);
                 } else {
-                    // 버튼이 계속 눌려있는 상태 -> 누른 시간 계산
                     int64_t duration = current_time - keys[i].press_start_time;
-
-                    // 10초 이상 이벤트 발생 (최초 1회만)
                     if (duration >= TIME_THRES_10S && !keys[i].event_triggered_10s) {
                         keys[i].event_triggered_10s = true;
                         if(keys[1].event_triggered_10s && keys[0].event_triggered_10s)
@@ -81,7 +75,6 @@ static void key_polling_task(void *arg)
                             send_ui_cmd_msg(&msg, UI_FACTORY_CMD);
                         }
                     }
-                    // 5초 이상 이벤트 발생 (최초 1회만)
                     else if (duration >= TIME_THRES_5S && !keys[i].event_triggered_5s) {
                         keys[i].event_triggered_5s = true;
                         if(keys[i].pin == KEY_SET && !keys[0].is_pressed && !keys[1].is_pressed)
@@ -90,7 +83,6 @@ static void key_polling_task(void *arg)
                             send_ui_cmd_msg(&msg, UI_PAIRING_CMD);
 						}
                     }
-                    // 3초 이상 이벤트 발생 (최초 1회만)
                     else if (duration >= TIME_THRES_3S && !keys[i].event_triggered_3s) {
                         keys[i].event_triggered_3s = true;
                         if(keys[i].pin == KEY_CHANGE && !keys[0].is_pressed && !keys[2].is_pressed)
@@ -101,10 +93,7 @@ static void key_polling_task(void *arg)
                     }
                 }
             } else {
-                // 버튼이 떨어졌을 때 처리
                 if (keys[i].is_pressed) {
-//                    int64_t total_duration = current_time - keys[i].press_start_time;
-
 					if(!keys[i].event_triggered_10s &&
 						!keys[i].event_triggered_5s &&
 						!keys[i].event_triggered_3s)
@@ -112,12 +101,26 @@ static void key_polling_task(void *arg)
 						if(keys[i].pin == KEY_CLEAN && !keys[1].is_pressed && !keys[2].is_pressed)
 						{
                             msg.task_id = (uint32_t)arg;
-                            send_ui_cmd_msg(&msg, UI_CLEAN_CMD);
+                            if(get_status_diag())
+                            {
+                           	 	send_diag_cmd_msg(&msg, DIAG_NEXT_STEP_CMD);
+							}
+							else
+							{
+                           	 	send_ui_cmd_msg(&msg, UI_CLEAN_CMD);
+							}
 						}
 						else if(keys[i].pin == KEY_CHANGE && !keys[0].is_pressed && !keys[2].is_pressed)
 						{
                             msg.task_id = (uint32_t)arg;
-                            send_ui_cmd_msg(&msg, UI_MANAGE_FINISH_CMD);
+                            if(get_status_diag())
+                            {
+                           	 	send_diag_cmd_msg(&msg, DIAG_NEXT_FUNC_CMD);
+							}
+							else
+							{
+                            	send_ui_cmd_msg(&msg, UI_MANAGE_FINISH_CMD);
+                            }
 						}
 						else if(keys[i].pin == KEY_SET && !keys[0].is_pressed && !keys[1].is_pressed)
 						{
@@ -125,9 +128,6 @@ static void key_polling_task(void *arg)
                             send_ui_cmd_msg(&msg, UI_TARE_ZERO_CMD);
 						}
 					}
-//                    ESP_LOGI(TAG, "GPIO %d Released. Total duration: %lld ms", keys[i].pin, total_duration);
-                    
-                    // 상태 초기화
                     keys[i].is_pressed = false;
 	                keys[i].event_triggered_3s = false;
 	                keys[i].event_triggered_5s = false;
@@ -143,4 +143,13 @@ void keyscan_init(void)
 	ESP_LOGI(TAG, "%s", __func__);
     init_key_gpio();
     xTaskCreate(key_polling_task, "key_polling_task", 3072, NULL, 5, NULL);
+}
+
+bool get_keyclean_status(void)
+{
+	if(gpio_get_level(KEY_CLEAN) == 0)
+	{
+		return true;
+	}
+	return false;
 }

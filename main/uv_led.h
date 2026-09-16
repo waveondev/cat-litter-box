@@ -7,9 +7,7 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 
-int uv_led_enable(int enable);
 void uv_led_init(void);
-
 
 #ifdef __cplusplus
 }

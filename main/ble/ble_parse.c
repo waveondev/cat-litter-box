@@ -135,7 +135,7 @@ void ble_send_encrypted_event(const char* event_type, const char* plain_data) {
     printf("[BLE_SEC] 암호화된 전송할 JSON Payload: %s\n", final_json);
     ble_send_data_to_queue((uint8_t*)final_json, strlen(final_json));
 
-    // 6. 메모리 정리 Test aa
+    // 6. 메모리 정리
     free(ciphertext);
     free(ct_b64);
     free(final_json);
@@ -481,7 +481,7 @@ void BLE_Receive_data(uint8_t* mac, uint8_t* data, uint16_t len)
             printf("data6: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_6.bit.type, Motion_Packet->motion_data.pack_data_6.bit.data, Motion_Packet->motion_data.pack_data_6.word);
             printf("data7: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_7.bit.type, Motion_Packet->motion_data.pack_data_7.bit.data, Motion_Packet->motion_data.pack_data_7.word);
             printf("data8: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_8.bit.type, Motion_Packet->motion_data.pack_data_8.bit.data, Motion_Packet->motion_data.pack_data_8.word);
-            //tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY,mac, Motion_Packet);
+            tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY,mac, Motion_Packet, 0, NULL);
             if(input_count == total_count)
             {
                 motion_msg_send(MOTION_DATA_ACK,Motion_Packet->motion_data.seq);

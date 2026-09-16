@@ -1,172 +1,185 @@
 #include "main.h"
 
-static const char *TAG = "LOADCELL";
+static const char *TAG = "LCELL";
 
-#define MAIN_CH_CNT           	4
-#define WASTE_CH_CNT          	2
-#define TARE_SAMPLES_NEEDED 	10
-#define MAIN_SCALE_FACT			1000.0f
+#define MAIN_CH 2
+#define WASTE_CH 2
 
-float scale_factors[MAIN_CH_CNT] = {32.45f, 31.90f, 32.12f, 32.55f}; 
+// --- 필터 및 타이머 설정 (100ms 주기 기준) ---
+#define STABLE_TICK_TARGET   30    // 3초 (100ms * 30) : 이 시간 동안 변화가 없어야 안정화
+#define AUTO_TARE_TICK_LIMIT 1800  // 3분 (100ms * 1800) : 유휴 상태 지속 시 자동 영점
+#define NOISE_THRESHOLD      1500  // ADC 흔들림 허용 범위
+#define DEADBAND_GRAMS       30.0f // 30g 이하의 미세 신호는 0g으로 마스킹 (노이즈/마찰 제거)
 
-int32_t main_tare_off[MAIN_CH_CNT] = {0, 0, 0, 0};
-volatile bool main_taring = false;
-int32_t main_tare_buf[MAIN_CH_CNT] = {0};
-int main_tare_cnt = 0;
+extern void save_lc_calibration_to_nvs(int state, int *offsets);
 
-int32_t waste_tare_off[WASTE_CH_CNT] = {0, 0};
-volatile bool waste_taring = false;
-int32_t waste_tare_buf[WASTE_CH_CNT] = {0};
-int waste_tare_cnt = 0;
+typedef enum {
+    STATE_IDLE,      
+    STATE_MOVING,    
+    STATE_STABLE     
+} LoadcellState;
 
-static void main_loadcell_tare(void) {
-    if (main_taring) return;
+static LoadcellState current_lc_state = STATE_IDLE;
+static int stable_counter = 0;
+static int idle_counter = 0;
+
+static int64_t current_main_sum = 0;
+static int64_t current_waste_sum = 0;
+static int64_t base_main_sum = 0;   
+static int64_t base_waste_sum = 0;  
+
+static double final_main_weight = 0.0f;
+static double final_waste_weight = 0.0f;
+
+static const double SCALE_MAIN = 0.010416; 
+static const double SCALE_WASTE = 0.006666; 
+
+static SemaphoreHandle_t cell_mutex = NULL;
+static QueueHandle_t loadcell_msg = NULL;
+
+extern int current_state; 
+
+// [수정] 컴파일 에러 해결을 위한 함수 사전 선언
+void loadcell_cmd_task(void *arg);
+
+void init_loadcell_global(void)
+{
+    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) 
+    {
+        current_lc_state = STATE_IDLE;
+        stable_counter = 0;
+        idle_counter = 0;
+        xSemaphoreGive(cell_mutex);
+    }
+}
+
+void loadcell_init(void)
+{
+    ESP_LOGI(TAG, "%s", __func__);  
+    loadcell_msg = xQueueCreate(10, sizeof(message_t)); 
+    cell_mutex = xSemaphoreCreateMutex();
+    init_loadcell_global();
     
-    memset(main_tare_buf, 0, sizeof(main_tare_buf));
-    main_tare_cnt = 0;
-    main_taring = true; // 영점 계산 시작 플래그 ON
-    ESP_LOGI(TAG, "Empty main loadcell, start to tare zero .......");
+    // 이제 컴파일러가 loadcell_cmd_task를 인식합니다.
+    xTaskCreate(loadcell_cmd_task, "loadcell_cmd_task", 4096, NULL, 5, NULL);    
 }
 
-static void waste_loadcell_tare(void) {
-    if (waste_taring) return;
-    
-    memset(waste_tare_buf, 0, sizeof(waste_tare_buf));
-    waste_tare_cnt = 0;
-    waste_taring = true; // 영점 계산 시작 플래그 ON
-    ESP_LOGI(TAG, "Empty waste loadcell, start to tare zero .......");
+void send_loadcell_msg(void *message, uint32_t cmd)
+{
+    message_t *msg = (message_t *)message;
+    msg->cmd = cmd;
+    xQueueSend(loadcell_msg, msg, pdMS_TO_TICKS(100));
 }
-
-void main_loadcell_sum_weight(int *raw_channels) {
-    // 1. 영점 조정 모드 구동 중일 때의 처리
-    if (main_taring) {
-        for (int i = 0; i < MAIN_CH_CNT; i++) {
-            main_tare_buf[i] += raw_channels[i];
-//            ESP_LOGI(TAG, ">> accumulate tare data %d %d %d ", i, main_tare_buf[i], raw_channels[i]);
-        }
-        main_tare_cnt++;
-
-        if (main_tare_cnt >= TARE_SAMPLES_NEEDED) {
-            for (int i = 0; i < MAIN_CH_CNT; i++) {
-                main_tare_off[i] = main_tare_buf[i] / TARE_SAMPLES_NEEDED;
-            }
-            main_taring = false;
-            ESP_LOGI(TAG, ">> main loadcell taring finished CH1:%ld, CH2:%ld, CH3:%ld, CH4:%ld", 
-                     main_tare_off[0], main_tare_off[1], main_tare_off[2], main_tare_off[3]);
-        }
-        return; // skip counting weight while taring 
-    }
-
-    
-    float each_calibrated_weight[MAIN_CH_CNT] = {0.0f};
-    float total_summed_weight = 0.0f;
-
-    for (int i = 0; i < MAIN_CH_CNT; i++) {
-        int32_t net_raw = (int32_t)raw_channels[i] - main_tare_off[i];
-        
-        each_calibrated_weight[i] = (float)net_raw / scale_factors[i];
-    }
-
-    for (int i = 0; i < MAIN_CH_CNT; i++) {
-        total_summed_weight += each_calibrated_weight[i];
-    }
-
-    if (total_summed_weight < 0.3f && total_summed_weight > -0.3f) {
-        total_summed_weight = 0.0f;
-    }
-/*    ESP_LOGI(TAG, "main net weight %.2f g [CH1]: %.1f g, [CH2]: %.1f g, [CH3]: %.1f g, [CH4]: %.1f g", 
-             total_summed_weight, 
-             each_calibrated_weight[0], 
-             each_calibrated_weight[1], 
-             each_calibrated_weight[2], 
-             each_calibrated_weight[3]); */
-}
-
-void waste_loadcell_sum_weight(int *raw_channels) {
-    // 1. 영점 조정 모드 구동 중일 때의 처리
-    if (waste_taring) {
-        for (int i = 0; i < WASTE_CH_CNT; i++) {
-            waste_tare_buf[i] += raw_channels[i];
-        }
-        waste_tare_cnt++;
-
-        if (waste_tare_cnt >= TARE_SAMPLES_NEEDED) {
-            for (int i = 0; i < WASTE_CH_CNT; i++) {
-                waste_tare_off[i] = waste_tare_buf[i] / TARE_SAMPLES_NEEDED;
-            }
-            waste_taring = false;
-            ESP_LOGI(TAG, ">> waste loadcell taring finished CH1:%ld, CH2:%ld", 
-                     waste_tare_off[0], waste_tare_off[1]);
-        }
-        return; // skip counting weight while taring 
-    }
-
-    float each_calibrated_weight[MAIN_CH_CNT] = {0.0f};
-    float total_summed_weight = 0.0f;
-
-    for (int i = 0; i < WASTE_CH_CNT; i++) {
-        int32_t net_raw = (int32_t)raw_channels[i] - waste_tare_off[i];
-        
-        each_calibrated_weight[i] = (float)net_raw / scale_factors[i];
-    }
-
-    // 3. 4개 지점 소프트웨어 Summing (최종 합산)
-    for (int i = 0; i < WASTE_CH_CNT; i++) {
-        total_summed_weight += each_calibrated_weight[i];
-    }
-
-    // 4. 무부하 상태 미세 노이즈 제거 (Deadband 처리)
-    // 센서 흔들림으로 인해 아무것도 없을 때 0.1g, -0.2g 변동하는 현상 방지
-    if (total_summed_weight < 0.3f && total_summed_weight > -0.3f) {
-        total_summed_weight = 0.0f;
-    }
-
-    // 5. 최종 데이터 출력 (100ms 주기 연산 결과)
-//    ESP_LOGI(TAG, "waste net weight %.2f g [CH1]: %.1f g, [CH2]: %.1f g", 
-//             total_summed_weight, 
-//             each_calibrated_weight[0], 
-//             each_calibrated_weight[1]);
-}
-
-#define LOADCELL_SCALE			1
 
 void loadcell_proc(int *values)
 {
-	int load[MAIN_CH_CNT+WASTE_CH_CNT];
-	int i = 0;
+    int64_t new_main_sum = (int64_t)values[2] + values[3] + values[4] + values[5];
+    int64_t new_waste_sum = (int64_t)values[0] + values[1];
 
-	if(!get_sensor_enable())
-		return;
-	
-	load[i++] = (int)*values++;
-	load[i++] = (int)*values++;
-	load[i++] = (int)*values++;
-	load[i++] = (int)*values++;
-	load[i++] = (int)*values++;
-	load[i++] = (int)*values++;
-	i = 0;
-	load[i++] /= LOADCELL_SCALE;
-	load[i++] /= LOADCELL_SCALE;
-	load[i++] /= LOADCELL_SCALE;
-	load[i++] /= LOADCELL_SCALE;
-	load[i++] /= LOADCELL_SCALE;
-	load[i++] /= LOADCELL_SCALE;
+    int64_t delta_main = llabs(new_main_sum - current_main_sum);
 
-	for(i=0;i<(MAIN_CH_CNT+WASTE_CH_CNT);i++)
-	{
-		if(load[i] < 0)
-		{
-			load[i] *= -1;
-		}
-	}
-	
-	main_loadcell_sum_weight(&load[0]);
-	waste_loadcell_sum_weight(&load[4]);
+    current_main_sum = new_main_sum;
+    current_waste_sum = new_waste_sum;
+
+    if (delta_main > NOISE_THRESHOLD) {
+        current_lc_state = STATE_MOVING;
+        stable_counter = 0;
+        idle_counter = 0;
+    } else {
+        if (current_lc_state == STATE_MOVING) {
+            stable_counter++;
+            if (stable_counter >= STABLE_TICK_TARGET) {
+                current_lc_state = STATE_STABLE;
+            }
+        } else if (current_lc_state == STATE_STABLE || current_lc_state == STATE_IDLE) {
+            current_lc_state = STATE_IDLE;
+            idle_counter++;
+            
+            if (idle_counter >= AUTO_TARE_TICK_LIMIT && final_main_weight < 500.0) { 
+                base_main_sum = current_main_sum; 
+                idle_counter = 0; 
+                ESP_LOGD(TAG, "Auto-Tare Applied (Creep compensation)");
+            }
+        }
+    }
+
+    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+        
+        double calc_main = (double)(current_main_sum - base_main_sum) * SCALE_MAIN;
+        if (calc_main > -DEADBAND_GRAMS && calc_main < DEADBAND_GRAMS) {
+            final_main_weight = 0.0f;
+        } else {
+            final_main_weight = calc_main;
+        }
+
+        double calc_waste = (double)(current_waste_sum - base_waste_sum) * SCALE_WASTE;
+        if (calc_waste > -DEADBAND_GRAMS && calc_waste < DEADBAND_GRAMS) {
+            final_waste_weight = 0.0f;
+        } else {
+            final_waste_weight = calc_waste;
+        }
+
+        xSemaphoreGive(cell_mutex);
+    }
 }
 
-void loadcell_init(void) 
+static void execute_tare(int state)
 {
-	ESP_LOGI(TAG, "%s", __func__);
-    main_loadcell_tare();
-    waste_loadcell_tare();
+    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+        base_main_sum = current_main_sum;
+        base_waste_sum = current_waste_sum;
+        
+        ESP_LOGI(TAG, "Manual Tare Executed. Base updated.");
+
+        if (state > 0) {
+            int save_offsets[4] = {
+                (int)(base_main_sum / 4), (int)(base_main_sum / 4), 
+                (int)(base_main_sum / 4), (int)(base_main_sum / 4)
+            };
+            save_lc_calibration_to_nvs(state, save_offsets);
+        }
+        xSemaphoreGive(cell_mutex);
+    }
+}
+
+void loadcell_cmd_task(void *arg) 
+{
+    ESP_LOGI(TAG, "%s +", __func__);
+    while (1) {
+        message_t msg = {0};
+        if (xQueueReceive(loadcell_msg, &msg, portMAX_DELAY) == pdPASS) {
+            switch((int)(msg.cmd))
+            {
+                case LOADCELL_TARE_CMD:
+                    execute_tare(0);
+                    break;
+                case LOADCELL_SAVE_STATE1_CMD:
+                    execute_tare(1);
+                    break;
+                case LOADCELL_SAVE_STATE2_CMD:
+                    execute_tare(2);
+                    break;
+                case LOADCELL_SAVE_STATE3_CMD:
+                    execute_tare(3);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+double get_weight(int mode)
+{
+    double ret_weight = 0.0f;
+    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+        if (mode == LOADCELL_MAIN) {
+            ret_weight = final_main_weight;
+        } else if (mode == LOADCELL_WASTE) {
+            ret_weight = final_waste_weight;
+        }
+        xSemaphoreGive(cell_mutex);
+    }
+    return ret_weight;
 }

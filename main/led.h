@@ -8,7 +8,7 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 typedef enum {
     LED_IDLE_CMD = 0,
-    LED_INITOK_CMD,
+    LED_INITOK_CMD,		// factory restore
     LED_PAIRING_CMD,
     LED_UNLOCK_CMD,
     LED_LOCK_CMD,
@@ -20,11 +20,6 @@ typedef enum {
     LED_ERROR_CMD,
     LED_QCMODE_CMD,
     LED_QCQUIT_CMD,
-    LED_FULL_RED_CMD,		// test
-    LED_FULL_GREEN_CMD,       // test
-    LED_FULL_BLUE_CMD,       // test
-    LED_FULL_WHITE_CMD,       // test
-    LED_FULL_OFF_CMD,       // test
     LED_CMD_MAX
 } led_cmd_t;
 

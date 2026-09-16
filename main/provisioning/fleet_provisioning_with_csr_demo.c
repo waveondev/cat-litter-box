@@ -187,8 +187,7 @@ static size_t thingNameLength;
  * accepted payload, it copies it into this buffer.
  */
 //static uint8_t payloadBuffer[ CONFIG_MQTT_NETWORK_BUFFER_SIZE ];
-static uint8_t *payloadBuffer;
-
+static uint8_t* payloadBuffer;
 /**
  * @brief Length of the payload stored in #payloadBuffer. This is set by the
  * MQTT publish callback when it copies a received payload into #payloadBuffer.
@@ -616,7 +615,7 @@ int aws_iot_provisioning_main( int argc,
     //char ownershipToken[ OWNERSHIP_TOKEN_BUFFER_LENGTH ];
 
     char* ownershipToken = (char*)calloc(1, OWNERSHIP_TOKEN_BUFFER_LENGTH);
-
+    payloadBuffer = calloc(1, CONFIG_MQTT_NETWORK_BUFFER_SIZE);
     size_t ownershipTokenLength;
     bool connectionEstablished = false;
     CK_SESSION_HANDLE p11Session;
@@ -635,7 +634,6 @@ int aws_iot_provisioning_main( int argc,
     // 읽어온 MAC 주소를 콜론 없이 대문자 16진수 문자열로 포맷팅합니다 (예: "28372F9C283C")
     snprintf(dynamicMacStr, sizeof(dynamicMacStr), "%02X%02X%02X%02X%02X%02X",
             mac_byte[0], mac_byte[1], mac_byte[2], mac_byte[3], mac_byte[4], mac_byte[5]);
-	payloadBuffer = calloc(1, CONFIG_MQTT_NETWORK_BUFFER_SIZE);
     do
     {
         /* Initialize the buffer lengths to their max lengths. */

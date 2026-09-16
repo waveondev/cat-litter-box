@@ -17,11 +17,13 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 
-int set_sensor_enable(bool enable);
 bool get_sensor_enable(void);
+
 
 int set_pt_status(int value);
 int get_pt_status(void);
+int set_tof_sensor_enable(bool enable);
+bool get_tof_sensor_enable(void);
 
 int sensor_data_parser(char *input);
 void sensor_init(void);

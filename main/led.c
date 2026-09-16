@@ -2,9 +2,8 @@
 
 static const char *TAG = "LED";
 
-// 핀 및 LED 개수 설정
-#define LED_STRIP_BLINK_GPIO  1// 제어에 사용할 GPIO 핀 번호
-#define LED_STRIP_MAX_LEDS    4    // 직렬 연결된 LED 개수
+#define LED_STRIP_BLINK_GPIO  1
+#define LED_STRIP_MAX_LEDS    4
 
 #define LED_ANIMATION_STEP			(1)
 static int ani_color = 0;
@@ -27,7 +26,7 @@ void send_led_cmd_msg(void *message, uint32_t cmd)
     } 
     else 
     {
-//        ESP_LOGW(TAG, "[Sender %ld] queuse full transfer failed", msg->task_id);
+//        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -515,21 +514,6 @@ void led_task(void *arg)
                 	set_led_opmode(LED_QCQUIT_MODE);
                 	break;
 
-                case LED_FULL_RED_CMD:       // test
-                    led_full_rgbw(0);
-                	break;
-                case LED_FULL_GREEN_CMD:       // test
-                    led_full_rgbw(1);
-                	break;
-                case LED_FULL_BLUE_CMD:       // test
-                    led_full_rgbw(2);
-                	break;
-                case LED_FULL_WHITE_CMD:       // test
-                    led_full_rgbw(3);
-                	break;
-                case LED_FULL_OFF_CMD:       // test
-                	led_full_off();
-                	break;
                 
                 default:
                 	break;
@@ -542,7 +526,6 @@ void led_init(void)
 {
 	ESP_LOGI(TAG, "%s", __func__);
 
-    /* 1. LED 스트립 공통 설정 */
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_STRIP_BLINK_GPIO,
         .max_leds = LED_STRIP_MAX_LEDS,
@@ -554,20 +537,17 @@ void led_init(void)
         }
     };
 
-    /* 2. RMT 백엔드 설정 */
     led_strip_rmt_config_t rmt_config = {
         .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz RMT 클럭 해상도
+        .resolution_hz = 10 * 1000 * 1000, 
         .mem_block_symbols = 64,
         .flags = {
-            .with_dma = false, // ESP32 기본 칩은 RMT DMA를 지원하지 않으므로 false
+            .with_dma = false, 
         }
     };
 
-    /* 3. LED 스트립 장치 할당 및 초기화 */
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
     
-    // 초기화 직후 모든 LED 끄기
     led_strip_clear(led_strip);
 
     led_cmd_msg = xQueueCreate(10, sizeof(message_t));

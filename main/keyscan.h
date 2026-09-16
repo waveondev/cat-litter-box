@@ -8,6 +8,8 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 
 void keyscan_init(void);
+bool get_keyclean_status(void);
+
 
 
 #ifdef __cplusplus

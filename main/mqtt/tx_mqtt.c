@@ -4,6 +4,7 @@
 #include "cJSON.h"
 #include "esp_mac.h"
 #include "mqtt_operations.h"
+#include "ble_task.h"
 
 
 
@@ -117,13 +118,13 @@ static cJSON* Get_cJSON_Data(messege_tx_mqtt_cmd_e cmd)
         break;
         case MESSEGE_ACCESS:
             cJSON_AddStringToObject(data_obj, "access_id", TEST_UUID);				// string
-            cJSON_AddStringToObject(data_obj, "source", "sensor");					// string
+            cJSON_AddStringToObject(data_obj, "source", get_tracker_found()?"tracker":"sensor");					// string
             cJSON_AddStringToObject(data_obj, "beacon_id", "TRACKER_112233445566");	// string
             cJSON_AddNumberToObject(data_obj, "rssi_dbm", 0);						// integer
         break;
         case MESSEGE_USAGE:
             cJSON_AddStringToObject(data_obj, "usage_id", TEST_UUID);				// string
-            cJSON_AddStringToObject(data_obj, "session_type", "unknown");			// string
+            cJSON_AddStringToObject(data_obj, "session_type", get_tracker_found()?"normal":"unknown");			// string
             cJSON_AddStringToObject(data_obj, "access_id_refs", "");				// string
             cJSON_AddStringToObject(data_obj, "tracker_id", "TRACKER_112233445566");// string
             cJSON_AddNumberToObject(data_obj, "cat_weight", 3500.0);				// float

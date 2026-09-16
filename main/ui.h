@@ -17,6 +17,13 @@ typedef enum {
     UI_CMD_MAX
 } ui_cmd_t;
 
+typedef enum {
+    PROXI_MODE_IDLE = 0,
+    PROXI_MODE_USE,
+	PROXI_MODE_ESCAPE,
+	PROXI_MODE_HARDEN,
+    PROXI_MODE_MAX
+} proximiy_cmd_t;
 
 void send_ui_cmd_msg(void *message, uint32_t cmd);
 

@@ -1,9 +1,10 @@
 #include "main.h"
 
 static const char *TAG = "UV_LED";
-static bool ev_led_enable = false;
+static bool uv_led_f = false;
+static int uv_led_tm = -1;
 #define GPIO_UV_LED   	48
-
+#define UVLED_ON_TIMEOUT			1200
 static void uv_led_gpio_init(void)
 {
     gpio_config_t io_conf = {
@@ -18,8 +19,7 @@ static void uv_led_gpio_init(void)
     gpio_set_level(GPIO_UV_LED, 0); // off
 }
 
-
-int uv_led_enable(int enable)
+static int uv_led_enable(bool enable)
 {
 	if(enable)
 	{
@@ -32,55 +32,55 @@ int uv_led_enable(int enable)
 	return 0;
 }
 
-void uv_led_task(void *arg)
+static bool check_uvled(void)
 {
 	int pt;
+    pt = get_pt_status();
+	if(!(pt&PT_BIT_REED_SW) && (pt&PT_BIT_WASTE_CLOSE))
+	{
+		return true;
+	}
+	return false;
+}
+
+void uv_led_task(void *arg)
+{
 	ESP_LOGI(TAG, "%s +", __func__);
 
     while (1) {
-        pt = get_pt_status();
-		if(!(pt&PT_BIT_REED_SW) && (pt&PT_BIT_WASTE_CLOSE))
-		{
-			if(!ev_led_enable)
-			{
-                ESP_LOGI(TAG, "UV LED ENABLED");
-				uv_led_enable(1);
-				ev_led_enable = true;
-			}
-		}
-		else
-		{
-			if(ev_led_enable)
-			{
-                ESP_LOGI(TAG, "UV LED DISABLED");
-				uv_led_enable(0);
-				ev_led_enable = false;
-			}
-		}
-			
+        if(check_uvled())
+        {
+            ESP_LOGI(TAG, "UV LED ENABLED");
+            uv_led_enable(true);
+            uv_led_f = true;
+        }
+        else
+        {
+            ESP_LOGI(TAG, "UV LED DISABLED");
+            uv_led_enable(false);
+            uv_led_f = false;
+        }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 void uv_led_init(void)
 {
-	int pt;
 	ESP_LOGI(TAG, "%s", __func__);
-	
+
 	uv_led_gpio_init();
-    pt = get_pt_status();
-    if(!(pt&PT_BIT_REED_SW) && (pt&PT_BIT_WASTE_CLOSE))
+    if(check_uvled())
     {
         ESP_LOGI(TAG, "UV LED ENABLED");
-		uv_led_enable(1);
-		ev_led_enable = true;
+		uv_led_enable(true);
+        uv_led_f = true;
     }
     else
     {
         ESP_LOGI(TAG, "UV LED DISABLED");
-		uv_led_enable(0);
-        ev_led_enable = false;
+		uv_led_enable(false);
+        uv_led_f = false;
 	}
-    xTaskCreate(uv_led_task, "uv_led_task", 2048, NULL, 10, NULL);
-    
+    //xTaskCreate(uv_led_task, "uv_led_task", 2048, NULL, 10, NULL);
+
 }

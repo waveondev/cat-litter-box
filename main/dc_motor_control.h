@@ -8,6 +8,7 @@ extern "C" {
 typedef enum {
 	PLATE_MOTOR = 0,
 	SCPINOUT_MOTOR,
+	MAIN_COVER_MOTOR,
 	DC_MOTOR_MAX
 } dc_motor_t;
 
@@ -15,6 +16,7 @@ typedef enum {
 
 void send_plate_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void send_scpinout_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
+void send_main_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void dc_motor_init(void);
 bool get_dcmotor_run(dc_motor_t mt);
 bool get_dcmotor_dir(dc_motor_t mt);

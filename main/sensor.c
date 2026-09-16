@@ -1,13 +1,13 @@
 #include "main.h"
 
-//#define PT_DUMP_DEBUG
+static const char *TAG = "SENSOR";
 
 #define MAX_ITEMS 10
 
+#ifdef FEATURE_TOF
 #define TOF_MIN_VALID      	0x300
 #define TOF_MAX_VALID      	0x1F00
-#define TOF_DEBOUNCE_TIME   30   // 3ï¿½ï¿½ Ã¤ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½
-#define LOOP_INTERVAL_MS   	100    // ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½Ö±ï¿½ (100ms)
+#define TOF_DEBOUNCE_TIME   30   // 3ÃÊ Ã¤ÅÍ¸µ ¹æÁö
 
 typedef enum {
     STATE_NO_APPROACH,
@@ -17,6 +17,11 @@ typedef enum {
 ApproachState current_state = STATE_NO_APPROACH;
 ApproachState prev_state = STATE_NO_APPROACH;
 static int chatter_counter_ms = 0;
+static SemaphoreHandle_t tof_mutex = NULL;
+static bool tof_enable_f = false;
+
+#endif
+
 static bool sensor_enable_f = false;
 
 #define ROADCELL_CNT_MAX 			6
@@ -24,60 +29,23 @@ static bool sensor_enable_f = false;
 #define PHOTO_VALUE_MAX 			4
 #define TOF_VALUE_MAX 				5
 
-static const char *TAG = "SENSOR";
-static SemaphoreHandle_t sensor_mutex;
+static SemaphoreHandle_t sensor_mutex = NULL;
+
 static int pt_value=0;
-
-
-#ifdef PT_DUMP_DEBUG
-static void dump_pt_value(int value)
-{
-#if 0
-	ESP_LOGI(TAG, "SCP_SPIN_ST : %s", (PT_BIT_SCP_SPIN_ST&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "SCP_OUT     : %s", (PT_BIT_SCP_OUT&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "WASTE_OPEN  : %s", (PT_BIT_WASTE_OPEN&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "MCOVER_OPEN : %s", (PT_BIT_MCOVER_OPEN&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "SCP_SPIN_ED : %s", (PT_BIT_SCP_SPIN_ED&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "SCP_IN      : %s", (PT_BIT_SCP_IN&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "WASTE_CLOSE : %s", (PT_BIT_WASTE_CLOSE&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "REED_SW     : %s", (PT_BIT_REED_SW&value)?"ON":"OFF");
-	ESP_LOGI(TAG, "MCOVER_CLOSE: %s", (PT_BIT_MCOVER_CLOSE&value)?"ON":"OFF");
-	ESP_LOGI(TAG, " ");
-#else
-#if 1
-	ESP_LOGI(TAG, ">>spin_s %d scp_e %d waste_e %d mcover_e %d spin_e %d scp_s %d waste_s %d reed %d mcover_s %d"
-						,(int)((PT_BIT_SCP_SPIN_ST&value)==PT_BIT_SCP_SPIN_ST)
-						,(int)((PT_BIT_SCP_OUT&value)==PT_BIT_SCP_OUT)
-					    ,(int)((PT_BIT_WASTE_OPEN&value)==PT_BIT_WASTE_OPEN)
-					    ,(int)((PT_BIT_MCOVER_OPEN&value)==PT_BIT_MCOVER_OPEN)
-					    ,(int)((PT_BIT_SCP_SPIN_ED&value)==PT_BIT_SCP_SPIN_ED)
-					    ,(int)((PT_BIT_SCP_IN&value)==PT_BIT_SCP_IN)
-					    ,(int)((PT_BIT_WASTE_CLOSE&value)==PT_BIT_WASTE_CLOSE)
-					    ,(int)((PT_BIT_REED_SW&value)==PT_BIT_REED_SW)
-					    ,(int)((PT_BIT_MCOVER_CLOSE&value)==PT_BIT_MCOVER_CLOSE)
-						);
-
-#else
-	ESP_LOGI(TAG, ">> scp out %d scp in %d"
-	                    ,(int)((PT_BIT_SCP_OUT&value)==PT_BIT_SCP_OUT)
-	                    ,(int)((PT_BIT_SCP_IN&value)==PT_BIT_SCP_IN)
-	                    );
-#endif
-#endif	
-}
-#endif
 
 int set_pt_status(int value)
 {
 	if(!sensor_enable_f)
+	{
 		return -1;
-		
+	}
+	if(sensor_mutex == NULL)
+	{
+		return -2;
+	}
     if (xSemaphoreTake(sensor_mutex, portMAX_DELAY) == pdTRUE) 
     {
 		pt_value = value;
-#ifdef PT_DUMP_DEBUG    
-		dump_pt_value(value);
-#endif
         xSemaphoreGive(sensor_mutex);
     }
 	return 0;
@@ -88,7 +56,7 @@ int get_pt_status(void)
 	return pt_value;
 }
 
-int set_sensor_enable(bool enable)
+static int set_sensor_enable(bool enable)
 {
 	if(enable)
 	{
@@ -110,43 +78,79 @@ bool get_sensor_enable(void)
 	return false;
 }
 
+int set_tof_sensor_enable(bool enable)
+{
+#ifdef FEATURE_TOF
+	if(tof_mutex == NULL)
+	{
+		return -1;
+	}
+    if (xSemaphoreTake(tof_mutex, portMAX_DELAY) == pdTRUE) 
+    {
+        tof_enable_f = enable;
+        if(tof_enable_f)
+        {
+            current_state = STATE_NO_APPROACH;
+            prev_state = STATE_NO_APPROACH;
+            chatter_counter_ms = 0;
+        }
+        xSemaphoreGive(tof_mutex);
+    }
+#endif
+    return 0;
+}
+
+#ifdef FEATURE_TOF
+
+bool get_tof_sensor_enable(void)
+{
+	return tof_enable_f;
+}
+
 static int tof_proc(int tof_value)
 {
+    mt_message_t msg = {0};
 //    mt_message_t msg = {0};
     bool is_in_range = (tof_value >= TOF_MIN_VALID && tof_value <= TOF_MAX_VALID);
 
 	if(!sensor_enable_f)
+	{
 		return -1;
+	}
+	
+	if(!tof_enable_f)
+	{
+		return -2;
+	}
 		
     if (is_in_range) {
-        // ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Â·ï¿½ ï¿½ï¿½È¯ ï¿½ï¿½ Ä«ï¿½ï¿½ï¿½ï¿½ ï¿½Ê±ï¿½È­
+        // À¯È¿ ¹üÀ§ ³» ÁøÀÔ ½Ã Áï½Ã Á¢±Ù »óÅÂ·Î ÀüÈ¯ ¹× Ä«¿îÅÍ ÃÊ±âÈ­
         current_state = STATE_APPROACH;
         chatter_counter_ms = 0;
         if(prev_state == STATE_NO_APPROACH)
         {
         	prev_state = STATE_APPROACH;
             ESP_LOGI(TAG, "STATE_APPROACH");
-//	    	send_motor_msg(&msg, MT_PAUSE_CMD);
 		}
     } else {
-        // ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½î³µï¿½ï¿½ ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½)
+        // À¯È¿ ¹üÀ§¸¦ ¹þ¾î³µÀ» ¶§ (Á¢±Ù ÇØÁ¦ Á¶°Ç)
         if (current_state == STATE_APPROACH) {
             chatter_counter_ms++;
             
-            // 3ï¿½ï¿½(3000ms) ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½È¿ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½î³ª ï¿½Ö¾ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ Ã³ï¿½ï¿½
+            // 3ÃÊ(3000ms) µ¿¾È À¯È¿ ¹üÀ§¸¦ ¹þ¾î³ª ÀÖ¾î¾ß ÃÖÁ¾ ÇØÁ¦ Ã³¸®
             if (chatter_counter_ms >= TOF_DEBOUNCE_TIME) {
                 current_state = STATE_NO_APPROACH;
                 prev_state = STATE_NO_APPROACH;
                 chatter_counter_ms = 0;
                 ESP_LOGI(TAG, "STATE_NO_APPROACH");
-//                send_motor_msg(&msg, MT_RESTORE_CMD);
             }
         }
     }
     return 0;
 }
+#endif
 
-int get_line(char *buf, int limit, char *ptr)
+static int get_line(char *buf, int limit, char *ptr)
 {
 	int i, len;
 	char *p;
@@ -191,7 +195,6 @@ int sensor_data_parser(char *input)
 	idx = get_line(buf, len, str);
 	ptr = buf+idx;	// next
 	
-//    ESP_LOGI(TAG, ">> %s", str);
 	while(idx > 0)
 	{
 	    int values[MAX_ITEMS] = {0};
@@ -204,40 +207,32 @@ int sensor_data_parser(char *input)
             {
             	// valid data or abandon
                 sscanf(data_ptr, "%d %d %d %d %d %d %d %d", &values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7]);
-//                ESP_LOGI(TAG, "rd : %d %d %d %d %d %d %d %d", values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]);	// debug
-//				if(values[6] < 0x1ff0)
-//                	ESP_LOGI(TAG, " %04x", values[6]);	// debug
+					ESP_LOGI(TAG, "M %06d %06d %06d %06d W %06d %06d TOF %03d PT %03d"
+						, values[2], values[3], values[4], values[5], values[0], values[1], values[6], values[7]);	// debug
 				loadcell_proc(&values[0]);
+#ifdef FEATURE_TOF
                 tof_proc(values[6]);	// tof
+#endif
                 set_pt_status(values[7]); // pt
             }
             total_used_chars += idx;
-#if 0
-        } else if (strncmp(str, "PT: ", 4) == 0) {
-            data_ptr = str + 4;
-            cnt = strlen(data_ptr);
-            if(cnt == 3)
-            {
-                sscanf(data_ptr, "%d", &values[0]);
-//                ESP_LOGI(TAG, "PT : %04x", values[0]);
-                set_pt_status(values[0]);
-                if(values[0]&PT_BIT_SCP_SPIN_ST)
-                {
-                	ESP_LOGI(TAG, "PT : 1");
-                }
-                else
-                {
-                	ESP_LOGI(TAG, "PT : 0");
-                }
-            }
-            total_used_chars += idx;
-#endif
         } else if (strncmp(str, "ST: OK", 6) == 0) {
             ESP_LOGI(TAG, "sensor start!!");
             set_sensor_enable(true);
             total_used_chars += idx;
         } else if (strncmp(str, "ST: FAIL", 8) == 0) {
             ESP_LOGI(TAG, "sensor FAILED !!");
+            total_used_chars += idx;
+        } else if (strncmp(str, "ER: ", 4) == 0) {
+            data_ptr = str + 4;
+            cnt = strlen(data_ptr);
+            if(cnt == 3)
+            {
+                sscanf(data_ptr, "%d", &values[0]);
+        	}
+            ESP_LOGI(TAG, "sensor board error : %d", values[0]);
+            message_t lmsg = {0};
+            send_led_cmd_msg(&lmsg, LED_ERROR_CMD);
             total_used_chars += idx;
         } else if (strncmp(str, "ST: ", 4) == 0) {
             data_ptr = str + 4;
@@ -246,7 +241,7 @@ int sensor_data_parser(char *input)
             ESP_LOGI(TAG, "%s", &status[0]);
             total_used_chars += idx;
         } else {
-            ESP_LOGI(TAG, "unknown %s", str);
+            ESP_LOGI(TAG, ">> %s", str);
             total_used_chars += idx; // abandon
         }
 
@@ -273,17 +268,27 @@ int sensor_data_parser(char *input)
 void sensor_init(void)
 {
 	int cnt;
+    message_t lmsg = {0};
+    
 	sensor_mutex = xSemaphoreCreateMutex();
+#ifdef FEATURE_TOF
+    tof_mutex = xSemaphoreCreateMutex();
+#endif
 	cnt = 0;
-#if 0
 	do{
-//        uart_write_bytes(UART_NUM_1, (const char *)"ss\n", strlen("ss\n"));
-		uart_write_bytes(UART_NUM_1, (const char *)"ss\n", 3);
-        uart_write_bytes(UART_NUM_1, (const char *)"$", 1);
+        uart_write_bytes(UART_NUM_1, (const char *)"ss\n", strlen("ss\n"));
+//		uart_write_bytes(UART_NUM_1, (const char *)"ss\n", 3);
 		cnt++;
 		if(cnt > 3)
 		{
-			ESP_LOGI(TAG, "sensor communication error !!");
+			if(cnt == 4)
+			{
+                send_led_cmd_msg(&lmsg, LED_ERROR_CMD);
+			}
+			else
+			{
+				ESP_LOGI(TAG, "sensor communication error !!");
+			}
 		}
         vTaskDelay(pdMS_TO_TICKS(500));
         if(sensor_enable_f)
@@ -291,5 +296,5 @@ void sensor_init(void)
 			break;
         }
 	} while(1);
-#endif
+	uart_write_bytes(UART_NUM_1, (const char *)"$$$$$$$", strlen("$$$$$$$"));
 }

@@ -6,12 +6,6 @@ extern "C" {
 #endif
 
 typedef enum {
-	MAIN_IDLE_MODE = 0,
-	MAIN_WAIT_MODE,
-	MAIN_MODE_MAX
-} main_motor_mode_t;
-
-typedef enum {
 	WASTE_IDLE_MODE = 0,
 	WASTE_WAIT_MODE,
 	WASTE_MODE_MAX
@@ -24,19 +18,20 @@ typedef enum {
 } scpspin_motor_mode_t;
 
 typedef enum {
-	MAIN_COVER_MOTOR = 0,
-	WASTE_COVER_MOTOR,
+	WASTE_COVER_MOTOR = 0,
 	SCPSPIN_MOTOR,
 	STEP_MOTOR_MAX
 } step_motor_t;
 
 /* Includes ------------------------------------------------------------------*/
+int get_waste_step_cnt(void);
 
 bool get_stepmotor_run(step_motor_t mt);
+bool get_stepmotor_dir(step_motor_t mt);
 int get_scpspin_cnt(void);
+int get_scpspin_remain_cnt(void);
 
 
-void send_main_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void send_waste_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void send_scpspin_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 
