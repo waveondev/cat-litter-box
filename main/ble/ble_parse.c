@@ -135,7 +135,7 @@ void ble_send_encrypted_event(const char* event_type, const char* plain_data) {
     printf("[BLE_SEC] 암호화된 전송할 JSON Payload: %s\n", final_json);
     ble_send_data_to_queue((uint8_t*)final_json, strlen(final_json));
 
-    // 6. 메모리 정리
+    // 6. 메모리 정리 Test aa
     free(ciphertext);
     free(ct_b64);
     free(final_json);
