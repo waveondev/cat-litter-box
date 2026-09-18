@@ -12,6 +12,7 @@ typedef struct {
     uint32_t cmd;
     uint32_t angle;
     uint32_t direction;
+    uint32_t speed;
     uint32_t timeout;
     bool cal;
 } mt_message_t;

@@ -7,7 +7,7 @@ static const char *TAG = "SENSOR";
 #ifdef FEATURE_TOF
 #define TOF_MIN_VALID      	0x300
 #define TOF_MAX_VALID      	0x1F00
-#define TOF_DEBOUNCE_TIME   30   // 3ÃÊ Ã¤ÅÍ¸µ ¹æÁö
+#define TOF_DEBOUNCE_TIME   30   // 3ï¿½ï¿½ Ã¤ï¿½Í¸ï¿½ ï¿½ï¿½ï¿½ï¿½
 
 typedef enum {
     STATE_NO_APPROACH,
@@ -124,7 +124,6 @@ static int tof_proc(int tof_value)
 	}
 		
     if (is_in_range) {
-        // À¯È¿ ¹üÀ§ ³» ÁøÀÔ ½Ã Áï½Ã Á¢±Ù »óÅÂ·Î ÀüÈ¯ ¹× Ä«¿îÅÍ ÃÊ±âÈ­
         current_state = STATE_APPROACH;
         chatter_counter_ms = 0;
         if(prev_state == STATE_NO_APPROACH)
@@ -133,11 +132,9 @@ static int tof_proc(int tof_value)
             ESP_LOGI(TAG, "STATE_APPROACH");
 		}
     } else {
-        // À¯È¿ ¹üÀ§¸¦ ¹þ¾î³µÀ» ¶§ (Á¢±Ù ÇØÁ¦ Á¶°Ç)
         if (current_state == STATE_APPROACH) {
             chatter_counter_ms++;
             
-            // 3ÃÊ(3000ms) µ¿¾È À¯È¿ ¹üÀ§¸¦ ¹þ¾î³ª ÀÖ¾î¾ß ÃÖÁ¾ ÇØÁ¦ Ã³¸®
             if (chatter_counter_ms >= TOF_DEBOUNCE_TIME) {
                 current_state = STATE_NO_APPROACH;
                 prev_state = STATE_NO_APPROACH;
@@ -207,8 +204,8 @@ int sensor_data_parser(char *input)
             {
             	// valid data or abandon
                 sscanf(data_ptr, "%d %d %d %d %d %d %d %d", &values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6], &values[7]);
-					ESP_LOGI(TAG, "M %06d %06d %06d %06d W %06d %06d TOF %03d PT %03d"
-						, values[2], values[3], values[4], values[5], values[0], values[1], values[6], values[7]);	// debug
+//					ESP_LOGI(TAG, "M %06d %06d %06d %06d W %06d %06d TOF %03d PT %03d"
+//						, values[2], values[3], values[4], values[5], values[0], values[1], values[6], values[7]);	// debug
 				loadcell_proc(&values[0]);
 #ifdef FEATURE_TOF
                 tof_proc(values[6]);	// tof

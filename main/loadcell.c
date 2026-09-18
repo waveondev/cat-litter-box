@@ -5,18 +5,18 @@ static const char *TAG = "LCELL";
 #define MAIN_CH 2
 #define WASTE_CH 2
 
-// --- ÇÊÅÍ ¹× Å¸ÀÌ¸Ó ¼³Á¤ (100ms ÁÖ±â ±âÁØ) ---
-#define STABLE_TICK_TARGET   30    // 3ÃÊ (100ms * 30) : ÀÌ ½Ã°£ µ¿¾È º¯È­°¡ ¾ø¾î¾ß ¾ÈÁ¤È­
-#define AUTO_TARE_TICK_LIMIT 1800  // 3ºÐ (100ms * 1800) : À¯ÈÞ »óÅÂ Áö¼Ó ½Ã ÀÚµ¿ ¿µÁ¡
-#define NOISE_THRESHOLD      1500  // ADC Èçµé¸² Çã¿ë ¹üÀ§
-#define DEADBAND_GRAMS       30.0f // 30g ÀÌÇÏÀÇ ¹Ì¼¼ ½ÅÈ£´Â 0gÀ¸·Î ¸¶½ºÅ· (³ëÀÌÁî/¸¶Âû Á¦°Å)
+// --- í•„í„° ë° íƒ€ì´ë¨¸ ì„¤ì • (100ms ì£¼ê¸° ê¸°ì¤€) ---
+#define STABLE_TICK_TARGET    30    // 3ì´ˆ (100ms * 30) : ìˆ˜ì¹˜ ì•ˆì •ì„ ìœ„í•œ ì¹´ìš´íŠ¸
+#define AUTO_TARE_TICK_LIMIT 1800  // 3ë¶„ (100ms * 1800) : ì˜ì  í¬ë¦¬í”„ ë³´ì •
+#define NOISE_THRESHOLD      1500  // ADC í”ë“¤ë¦¼ ê°ì§€ ìž„ê³„ê°’
+#define DEADBAND_GRAMS        30.0f // 30g ë¯¸ë§Œ ë¶ˆí•„ìš” ìˆ˜ì¹˜ 0g í´ëž¨í•‘
 
 extern void save_lc_calibration_to_nvs(int state, int *offsets);
 
 typedef enum {
-    STATE_IDLE,      
-    STATE_MOVING,    
-    STATE_STABLE     
+    STATE_IDLE,    
+    STATE_MOVING,  
+    STATE_STABLE   
 } LoadcellState;
 
 static LoadcellState current_lc_state = STATE_IDLE;
@@ -34,17 +34,18 @@ static double final_waste_weight = 0.0f;
 static const double SCALE_MAIN = 0.010416; 
 static const double SCALE_WASTE = 0.006666; 
 
+// â­ [ë‹¨ì¼í™” ë° ë„ ë°©ì–´] ë®¤í…ìŠ¤ ë° í í•¸ë“¤ ì •ë¦¬
 static SemaphoreHandle_t cell_mutex = NULL;
-static QueueHandle_t loadcell_msg = NULL;
+QueueHandle_t loadcell_msg = NULL;
 
 extern int current_state; 
 
-// [¼öÁ¤] ÄÄÆÄÀÏ ¿¡·¯ ÇØ°áÀ» À§ÇÑ ÇÔ¼ö »çÀü ¼±¾ð
 void loadcell_cmd_task(void *arg);
 
 void init_loadcell_global(void)
 {
-    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) 
+    // â­ cell_mutex ë„ ë°©ì–´ ì½”ë“œ ì¶”ê°€
+    if (cell_mutex != NULL && xSemaphoreTake(cell_mutex, pdMS_TO_TICKS(100)) == pdTRUE) 
     {
         current_lc_state = STATE_IDLE;
         stable_counter = 0;
@@ -55,17 +56,35 @@ void init_loadcell_global(void)
 
 void loadcell_init(void)
 {
-    ESP_LOGI(TAG, "%s", __func__);  
-    loadcell_msg = xQueueCreate(10, sizeof(message_t)); 
-    cell_mutex = xSemaphoreCreateMutex();
-    init_loadcell_global();
-    
-    // ÀÌÁ¦ ÄÄÆÄÀÏ·¯°¡ loadcell_cmd_task¸¦ ÀÎ½ÄÇÕ´Ï´Ù.
-    xTaskCreate(loadcell_cmd_task, "loadcell_cmd_task", 4096, NULL, 5, NULL);    
+    // â­ cell_mutex ìƒì„± ë° ê²€ì¦
+    if (cell_mutex == NULL) {
+        cell_mutex = xSemaphoreCreateMutex();
+        if (cell_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create cell_mutex!");
+            return;
+        }
+    }
+
+    // â­ loadcell_msg í ìƒì„± ë° ê²€ì¦
+    if (loadcell_msg == NULL) {
+        loadcell_msg = xQueueCreate(10, sizeof(message_t));
+        if (loadcell_msg == NULL) {
+            ESP_LOGE(TAG, "Failed to create loadcell_msg Queue!");
+            return;
+        }
+    }
+
+    ESP_LOGI(TAG, "Loadcell Mutex & Queue initialized successfully.");
 }
 
 void send_loadcell_msg(void *message, uint32_t cmd)
 {
+    // â­ í ë„ ì²´í¬ ë°©ì–´
+    if (loadcell_msg == NULL) {
+        ESP_LOGW(TAG, "loadcell_msg queue is NULL, msg ignored.");
+        return;
+    }
+
     message_t *msg = (message_t *)message;
     msg->cmd = cmd;
     xQueueSend(loadcell_msg, msg, pdMS_TO_TICKS(100));
@@ -73,6 +92,8 @@ void send_loadcell_msg(void *message, uint32_t cmd)
 
 void loadcell_proc(int *values)
 {
+    if (values == NULL) return;
+
     int64_t new_main_sum = (int64_t)values[2] + values[3] + values[4] + values[5];
     int64_t new_waste_sum = (int64_t)values[0] + values[1];
 
@@ -103,7 +124,8 @@ void loadcell_proc(int *values)
         }
     }
 
-    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+    // â­ cell_mutex ë„ ì²´í¬ ë°©ì–´
+    if (cell_mutex != NULL && xSemaphoreTake(cell_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         
         double calc_main = (double)(current_main_sum - base_main_sum) * SCALE_MAIN;
         if (calc_main > -DEADBAND_GRAMS && calc_main < DEADBAND_GRAMS) {
@@ -125,7 +147,8 @@ void loadcell_proc(int *values)
 
 static void execute_tare(int state)
 {
-    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+    // â­ cell_mutex ë„ ì²´í¬ ë°©ì–´
+    if (cell_mutex != NULL && xSemaphoreTake(cell_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         base_main_sum = current_main_sum;
         base_waste_sum = current_waste_sum;
         
@@ -147,6 +170,13 @@ void loadcell_cmd_task(void *arg)
     ESP_LOGI(TAG, "%s +", __func__);
     while (1) {
         message_t msg = {0};
+        
+        // â­ íê°€ ì´ˆê¸°í™”ë  ë•Œê¹Œì§€ ëŒ€ê¸°
+        if (loadcell_msg == NULL) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         if (xQueueReceive(loadcell_msg, &msg, portMAX_DELAY) == pdPASS) {
             switch((int)(msg.cmd))
             {
@@ -173,7 +203,9 @@ void loadcell_cmd_task(void *arg)
 double get_weight(int mode)
 {
     double ret_weight = 0.0f;
-    if (xSemaphoreTake(cell_mutex, portMAX_DELAY) == pdTRUE) {
+
+    // â­ cell_mutex ë„ ì²´í¬ ë°©ì–´
+    if (cell_mutex != NULL && xSemaphoreTake(cell_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (mode == LOADCELL_MAIN) {
             ret_weight = final_main_weight;
         } else if (mode == LOADCELL_WASTE) {

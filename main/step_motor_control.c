@@ -19,7 +19,6 @@ static const char *TAG = "STEP_MOTOR_CTRL";
 #define PIN_DRV_EN            GPIO_NUM_5
 #define PIN_DRV_NSLEEP        GPIO_NUM_46
 
-// [¸ðÅÍ »ç¾ç ¼³Á¤] 90µµ È¸ÀüÀ» À§ÇÑ ½ºÅÜ ¼ö °è»ê
 #define MOTOR_STEP_ANGLE      1.8f          	
 #define MICROSTEPPING         51
 
@@ -84,6 +83,22 @@ void send_scpspin_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_
     else 
     {
 //        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
+    }
+}
+
+void send_scpspin_motor_msg_ex(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t speed, uint32_t timeout, bool cal)
+{
+    mt_message_t *msg = (mt_message_t *)message;
+    msg->cmd = cmd;
+    msg->angle = angle;
+    msg->direction = dir;
+    msg->speed = speed;     // mt_message_tì— speedê°€ ì—†ë‹¤ë©´ timeout ë“± ë³„ë„ í•„ë“œë¡œ ìˆ˜ì‹ ë¶€ì™€ ì•½ì† í›„ ì „ë‹¬ ê°€ëŠ¥
+    msg->timeout = timeout;
+    msg->cal = cal;
+    
+    BaseType_t status = xQueueSend(scpspin_motor_msg, msg, pdMS_TO_TICKS(100));
+    if (status != pdPASS) {
+        // ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -163,9 +178,9 @@ static void waste_motor_timer_callback(void* arg)
         step_motor_enable(WASTE_COVER_MOTOR, 0);
 	}
     if (waste_motor_dir) {
-        waste_motor_phase = (waste_motor_phase + 1) % 4; // Á¤¹æÇâ Áõ°¡
+        waste_motor_phase = (waste_motor_phase + 1) % 4;
     } else {
-        waste_motor_phase = (waste_motor_phase - 1 + 4) % 4; // ¿ª¹æÇâ °¨¼Ò
+        waste_motor_phase = (waste_motor_phase - 1 + 4) % 4;
     }
 }
 
@@ -425,16 +440,13 @@ static void waste_motor_cmd_task(void *arg)
             }
         }
 
-        // ¼öÁ¤(º¹¿ø)µÈ ºÎºÐ: ±¸µ¿ ¹æÇâ¿¡ ÀÏÄ¡ÇÏ´Â ¼¾¼­°¡ °¨ÁöµÇ¾úÀ» ¶§¸¸ Á¤Áö
         if (waste_motor_run) {
             int pt_status = pt_check(STEP_MOTOR, WASTE_COVER_MOTOR);
             
-            // FORWARD (¿­¸²) ±¸µ¿ Áß ¿­¸² ¼¾¼­(1) °¨Áö ½Ã
             if (waste_motor_dir == true && pt_status == 1) {
                 ESP_LOGI(TAG, "WASTE_COVER OPEN sensor detected. Auto stop.");
                 waste_motor_stop();
             }
-            // REVERSE (´ÝÈû) ±¸µ¿ Áß ´ÝÈû ¼¾¼­(-1) °¨Áö ½Ã
             else if (waste_motor_dir == false && pt_status == -1) {
                 ESP_LOGI(TAG, "WASTE_COVER CLOSE sensor detected. Auto stop.");
                 waste_motor_stop();
@@ -502,16 +514,13 @@ static void scpspin_motor_cmd_task(void *arg)
             }
         }
 
-        // ¼öÁ¤(º¹¿ø)µÈ ºÎºÐ: ±¸µ¿ ¹æÇâ¿¡ ÀÏÄ¡ÇÏ´Â ¼¾¼­°¡ °¨ÁöµÇ¾úÀ» ¶§¸¸ Á¤Áö
         if (scpspin_motor_run) {
             int pt_status = pt_check(STEP_MOTOR, SCPSPIN_MOTOR);
             
-            // FORWARD È¸Àü Áß ÇØ´ç ¹æÇâ ¼¾¼­(1) °¨Áö ½Ã
             if (scpspin_motor_dir == true && pt_status == 1) {
                 ESP_LOGI(TAG, "SCP_SPIN FORWARD sensor detected. Auto stop.");
                 scpspin_stop(true);
             }
-            // REVERSE È¸Àü Áß ÇØ´ç ¹æÇâ ¼¾¼­(-1) °¨Áö ½Ã
             else if (scpspin_motor_dir == false && pt_status == -1) {
                 ESP_LOGI(TAG, "SCP_SPIN REVERSE sensor detected. Auto stop.");
                 scpspin_stop(true);

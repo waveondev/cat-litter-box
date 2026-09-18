@@ -355,14 +355,15 @@ void proximity_task(void *arg)
 	            	{
 						cat_use_cnt++;
 						cat_enter_cnt = 0;
-						ESP_LOGI(TAG, "PROXI_MODE_USE %d !!\n", cat_use_cnt);
+//						ESP_LOGI(TAG, "PROXI_MODE_USE %d !!\n", cat_use_cnt);
 	            	}
 	            	else
 	            	{
 						cat_enter_cnt++;
 						if(cat_enter_cnt > 10)	// 5 sec chattering
 						{
-							mode = PROXI_MODE_ESCAPE;
+							mode = PROXI_MODE_ESCAPE;
+
 							ESP_LOGI(TAG, "to PROXI_MODE_ESCAPE !!");
 						}
 						ESP_LOGI(TAG, "cat moving !!");
@@ -376,7 +377,8 @@ void proximity_task(void *arg)
 //                    send_loadcell_msg(&lmsg, LOADCELL_INIT_CMD);
 //                    vTaskDelay(pdMS_TO_TICKS(500));
 	            	cat_enter_cnt = 0;
-                    mode = PROXI_MODE_HARDEN;
+                    mode = PROXI_MODE_HARDEN;
+
                     send_led_cmd_msg(&lmsg, LED_IDLE_CMD);
 	            	break;
 	            case PROXI_MODE_HARDEN:

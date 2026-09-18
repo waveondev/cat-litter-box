@@ -34,7 +34,7 @@ int get_scpspin_remain_cnt(void);
 
 void send_waste_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void send_scpspin_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
-
+void send_scpspin_motor_msg_ex(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t speed, uint32_t timeout, bool cal);
 void step_motor_init(void);
 
 #ifdef __cplusplus
