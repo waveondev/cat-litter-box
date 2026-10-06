@@ -50,6 +50,13 @@ static QueueHandle_t scpspin_motor_msg = NULL;
 static uint32_t new_spin_period = 0;
 static uint32_t new_spin_tick = 0;
 
+// 🌟 [추가]: 스텝 모터 전체 큐 비우기 함수
+void step_motor_flush_queues(void)
+{
+    if (waste_motor_msg)   xQueueReset(waste_motor_msg);
+    if (scpspin_motor_msg) xQueueReset(scpspin_motor_msg);
+}
+
 void send_waste_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout)
 {
 	mt_message_t *msg = (mt_message_t *)message;
@@ -60,11 +67,9 @@ void send_waste_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t 
     BaseType_t status = xQueueSend(waste_motor_msg, msg, pdMS_TO_TICKS(100));
     if (status == pdPASS) 
     {
-//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
     } 
     else 
     {
-//        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -78,11 +83,9 @@ void send_scpspin_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_
     BaseType_t status = xQueueSend(scpspin_motor_msg, msg, pdMS_TO_TICKS(100));
     if (status == pdPASS) 
     {
-//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
     } 
     else 
     {
-//        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -92,13 +95,12 @@ void send_scpspin_motor_msg_ex(void *message, uint32_t cmd, uint32_t angle, uint
     msg->cmd = cmd;
     msg->angle = angle;
     msg->direction = dir;
-    msg->speed = speed;     // mt_message_t에 speed가 없다면 timeout 등 별도 필드로 수신부와 약속 후 전달 가능
+    msg->speed = speed;
     msg->timeout = timeout;
     msg->cal = cal;
     
     BaseType_t status = xQueueSend(scpspin_motor_msg, msg, pdMS_TO_TICKS(100));
     if (status != pdPASS) {
-        // ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -157,7 +159,7 @@ static void waste_motor_stop(void) {
         gpio_set_level(WASTE_PWM_IN1, 0);
         gpio_set_level(WASTE_PWM_IN2, 0);
     }
-		step_motor_enable(WASTE_COVER_MOTOR, 0);    
+	step_motor_enable(WASTE_COVER_MOTOR, 0);    
     waste_motor_steps = 0;
 }
 
@@ -344,7 +346,6 @@ static void scpspin_speed(uint32_t period)
 	ESP_LOGI(TAG, "%s spin_period %d changed ", __func__, (int)new_spin_period);
 }
 
-
 static void scpspin_move(uint32_t steps, bool direction) {
     gpio_set_level(PIN_DRV_DIR, direction);
     
@@ -386,7 +387,6 @@ bool get_stepmotor_dir(step_motor_t mt)
 	}
 	return ret;
 }
-
 
 int get_scpspin_cnt(void)
 {
@@ -456,8 +456,6 @@ static void waste_motor_cmd_task(void *arg)
     vTaskDelete(NULL);
 }
 
-
-
 static void scpspin_motor_cmd_task(void *arg) 
 {
     ESP_LOGI(TAG, "%s +", __func__);
@@ -478,7 +476,7 @@ static void scpspin_motor_cmd_task(void *arg)
                     }
                     else if(msg.direction == STOP)
                     {
-                        scpspin_stop(false); // safe terminate
+                        scpspin_stop(false);
                     }
                     break;
 
@@ -513,19 +511,6 @@ static void scpspin_motor_cmd_task(void *arg)
                     break;
             }
         }
-
-        if (scpspin_motor_run) {
-            int pt_status = pt_check(STEP_MOTOR, SCPSPIN_MOTOR);
-            
-            if (scpspin_motor_dir == true && pt_status == 1) {
-                ESP_LOGI(TAG, "SCP_SPIN FORWARD sensor detected. Auto stop.");
-                scpspin_stop(true);
-            }
-            else if (scpspin_motor_dir == false && pt_status == -1) {
-                ESP_LOGI(TAG, "SCP_SPIN REVERSE sensor detected. Auto stop.");
-                scpspin_stop(true);
-            }
-        }
     }
     vTaskDelete(NULL);
 }
@@ -535,7 +520,7 @@ void step_motor_init(void)
 	ESP_LOGI(TAG, "%s", __func__);
 
     init_step_motor_gpio();
-    init_mcpwm_step_generator();	// scp spin
+    init_mcpwm_step_generator();
 
     waste_motor_msg = xQueueCreate(10, sizeof(mt_message_t));
     scpspin_motor_msg = xQueueCreate(10, sizeof(mt_message_t));

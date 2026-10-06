@@ -521,6 +521,9 @@ static MbedtlsPkcs11Status_t configureMbedtlsFragmentLength( MbedtlsPkcs11Contex
         //     returnStatus = MBEDTLS_PKCS11_INTERNAL_ERROR;
         // }
     #endif /* ifdef MBEDTLS_SSL_MAX_FRAGMENT_LENGTH */
+
+    ( void ) mbedtlsError; /* Suppress unused variable warning */
+
     return returnStatus;
 }
 

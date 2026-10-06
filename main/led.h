@@ -20,6 +20,7 @@ typedef enum {
     LED_ERROR_CMD,
     LED_QCMODE_CMD,
     LED_QCQUIT_CMD,
+    LED_PAUSE_CMD,      // ⭐ 신규 추가: 일시정지 LED 명령
     LED_CMD_MAX
 } led_cmd_t;
 
@@ -63,14 +64,14 @@ typedef enum {
     LED_QCQUIT_MODE_3,
     LED_QCQUIT_MODE_4,
     LED_QCQUIT_MODE_5,
+    LED_PAUSE_MODE,     // ⭐ 신규 추가: 노란색 ON 시작
+    LED_PAUSE_MODE_1,   // ⭐ 신규 추가: 500ms ON 대기
+    LED_PAUSE_MODE_2,   // ⭐ 신규 추가: 500ms OFF 대기
     LED_MODE_MAX
 } led_mode_t;
 
 void send_led_cmd_msg(void *message, uint32_t cmd);
-
 void led_init(void);
-
-
 
 #ifdef __cplusplus
 }

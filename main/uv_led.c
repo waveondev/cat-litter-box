@@ -2,7 +2,6 @@
 
 static const char *TAG = "UV_LED";
 static bool uv_led_f = false;
-static int uv_led_tm = -1;
 #define GPIO_UV_LED   	48
 #define UVLED_ON_TIMEOUT			1200
 static void uv_led_gpio_init(void)

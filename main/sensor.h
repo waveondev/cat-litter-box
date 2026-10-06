@@ -15,18 +15,22 @@ extern "C" {
 #define PT_BIT_REED_SW		0x0080
 #define PT_BIT_MCOVER_CLOSE	0x0100
 
-/* Includes ------------------------------------------------------------------*/
-
+/* Function Prototypes -------------------------------------------------------*/
 bool get_sensor_enable(void);
-
 
 int set_pt_status(int value);
 int get_pt_status(void);
+
+// 🌟 TOF 센서 관련 함수 프로토타입
 int set_tof_sensor_enable(bool enable);
 bool get_tof_sensor_enable(void);
+int get_tof_distance(void); 
+void reset_tof_ring_buffer(void); // 검사 직전 이전 버퍼 잔류 수치 전면 삭제(Clear)
+int get_tof_ring_count(void);     // 🌟 [누락 해결]: motor.c 연동을 위한 TOF 링버퍼 카운트 함수 추가
 
 int sensor_data_parser(char *input);
 void sensor_init(void);
+
 #ifdef __cplusplus
 }
 #endif

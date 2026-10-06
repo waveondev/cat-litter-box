@@ -9,9 +9,33 @@
 
 static const char *TAG = __FILE__;
 
+#define NVS_REG_NAMESPACE "storage"
+#define NVS_REG_KEY       "is_registered"
 
-// [¾²±â ÇÔ¼ö] 
-// len ¸Å°³º¯¼ö´Â nvs_set_str ³»ºÎ¿¡¼­ ÀÚµ¿À¸·Î ±æÀÌ¸¦ °è»êÇÏ¹Ç·Î »ç½Ç»ó ¾È ½áµµ ¹«¹æÇÕ´Ï´Ù.
+// [ì˜¨ë³´ë”© / Registration í”Œë˜ê·¸ ì „ìš© í•¨ìˆ˜]
+void read_nvs_registration_flag(bool *done)
+{
+    if (done == NULL) return;
+    
+    uint32_t value = 0;
+    // ê¸°ì¡´ ì •ìˆ˜í˜• ì½ê¸° í•¨ìˆ˜ í™œìš© (ì €ì¥ëœ ê°’ì´ ì—†ìœ¼ë©´ ê¸°ë³¸ê°’ 0 ìœ ì§€)
+    esp_err_t err = read_nvs_uint(NVS_REG_NAMESPACE, NVS_REG_KEY, &value);
+    
+    if (err == ESP_OK && value == 1) {
+        *done = true;
+    } else {
+        *done = false;
+    }
+}
+
+void write_nvs_registration_flag(bool done)
+{
+    // ê¸°ì¡´ ì •ìˆ˜í˜• ì“°ê¸° í•¨ìˆ˜ í™œìš© (1: ì™„ë£Œ, 0: ë¯¸ì™„ë£Œ)
+    write_nvs_uint(NVS_REG_NAMESPACE, NVS_REG_KEY, done ? 1 : 0);
+}
+
+// [ì“°ê¸° í•¨ìˆ˜] 
+// len ë§¤ê°œë³€ìˆ˜ëŠ” nvs_set_str ë‚´ë¶€ì—ì„œ ìë™ìœ¼ë¡œ ê¸¸ì´ë¥¼ ê³„ì‚°í•˜ë¯€ë¡œ ì‚¬ì‹¤ìƒ ì•ˆ ì¨ë„ ë¬´ë°©í•©ë‹ˆë‹¤.
 void write_nvs_memory(const char* name, const char* key, const char* data)
 {
     nvs_handle_t my_handle;
@@ -19,26 +43,26 @@ void write_nvs_memory(const char* name, const char* key, const char* data)
 
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return;
     }
 
-    // ¸Å°³º¯¼ö key¸¦ ±×´ë·Î »ç¿ë
+    // ë§¤ê°œë³€ìˆ˜ keyë¥¼ ê·¸ëŒ€ë¡œ ì‚¬ìš©
     err = nvs_set_str(my_handle, key, data);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] ÀúÀå ¼º°ø: %s", name, key, data);
+        ESP_LOGI(TAG, "[%s -> %s] ì €ì¥ ì„±ê³µ: %s", name, key, data);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] ÀúÀå ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] ì €ì¥ ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     err = nvs_commit(my_handle);
-    if (err != ESP_OK) ESP_LOGE(TAG, "Ä¿¹Ô ½ÇÆĞ!");
+    if (err != ESP_OK) ESP_LOGE(TAG, "ì»¤ë°‹ ì‹¤íŒ¨!");
 
     nvs_close(my_handle);
 }
 
-// [ÀĞ±â ÇÔ¼ö] 
-// ¿ÜºÎ¿¡¼­ µ¥ÀÌÅÍ¸¦ ´ã¾Æ°¥ ºó ±×¸©(out_data)°ú ±× ±×¸©ÀÇ ÃÖ´ë Å©±â(max_len)¸¦ ¹Şµµ·Ï ¼öÁ¤
+// [ì½ê¸° í•¨ìˆ˜] 
+// ì™¸ë¶€ì—ì„œ ë°ì´í„°ë¥¼ ë‹´ì•„ê°ˆ ë¹ˆ ê·¸ë¦‡(out_data)ê³¼ ê·¸ ê·¸ë¦‡ì˜ ìµœëŒ€ í¬ê¸°(max_len)ë¥¼ ë°›ë„ë¡ ìˆ˜ì •
 esp_err_t read_nvs_memory(const char* name, const char* key, char* out_data, uint16_t max_len)
 {
     nvs_handle_t my_handle;
@@ -46,35 +70,35 @@ esp_err_t read_nvs_memory(const char* name, const char* key, char* out_data, uin
 
     err = nvs_open(name, NVS_READONLY, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return err;
     }
 
-    // 1. Å©±â È®ÀÎ ´Ü°è (¸Å°³º¯¼ö key »ç¿ë)
+    // 1. í¬ê¸° í™•ì¸ ë‹¨ê³„ (ë§¤ê°œë³€ìˆ˜ key ì‚¬ìš©)
     size_t required_size = 0;
     err = nvs_get_str(my_handle, key, NULL, &required_size);
 
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "[%s -> %s] ÀúÀåµÈ µ¥ÀÌÅÍ°¡ ¾ø½À´Ï´Ù.", name, key);
+        ESP_LOGW(TAG, "[%s -> %s] ì €ì¥ëœ ë°ì´í„°ê°€ ì—†ìŠµë‹ˆë‹¤.", name, key);
         nvs_close(my_handle);
         return err;
     }
 
-    // 2. ½ÇÁ¦ ÀĞ±â ´Ü°è
+    // 2. ì‹¤ì œ ì½ê¸° ë‹¨ê³„
     if (err == ESP_OK && required_size > 0) {
-        // ¿ì¸®°¡ ¿ÜºÎ¿¡¼­ ÁØºñÇÑ ±×¸©(max_len)º¸´Ù NVS¿¡ ÀúÀåµÈ µ¥ÀÌÅÍ°¡ ´õ Å©¸é ¿¡·¯ Ã³¸® (¾ÈÀüÀåÄ¡)
+        // ìš°ë¦¬ê°€ ì™¸ë¶€ì—ì„œ ì¤€ë¹„í•œ ê·¸ë¦‡(max_len)ë³´ë‹¤ NVSì— ì €ì¥ëœ ë°ì´í„°ê°€ ë” í¬ë©´ ì—ëŸ¬ ì²˜ë¦¬ (ì•ˆì „ì¥ì¹˜)
         if (required_size > max_len) {
-            ESP_LOGE(TAG, "¹öÆÛ Å©±â°¡ ºÎÁ·ÇÕ´Ï´Ù. (ÇÊ¿ä: %d, ¼ö¿ë°¡´É: %d)", required_size, max_len);
+            ESP_LOGE(TAG, "ë²„í¼ í¬ê¸°ê°€ ë¶€ì¡±í•©ë‹ˆë‹¤. (í•„ìš”: %d, ìˆ˜ìš©ê°€ëŠ¥: %d)", required_size, max_len);
             nvs_close(my_handle);
             return ESP_ERR_INVALID_SIZE;
         }
 
-        // ¸Å°³º¯¼ö key¸¦ »ç¿ëÇØ out_data ±×¸©¿¡ Á÷Á¢ µ¥ÀÌÅÍ¸¦ ¹Ş¾Æ¿É´Ï´Ù.
+        // ë§¤ê°œë³€ìˆ˜ keyë¥¼ ì‚¬ìš©í•´ out_data ê·¸ë¦‡ì— ì§ì ‘ ë°ì´í„°ë¥¼ ë°›ì•„ì˜µë‹ˆë‹¤.
         err = nvs_get_str(my_handle, key, out_data, &required_size);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "[%s -> %s] ÀĞ±â ¼º°ø: %s", name, key, out_data);
+            ESP_LOGI(TAG, "[%s -> %s] ì½ê¸° ì„±ê³µ: %s", name, key, out_data);
         } else {
-            ESP_LOGE(TAG, "[%s -> %s] ÀĞ±â ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+            ESP_LOGE(TAG, "[%s -> %s] ì½ê¸° ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
         }
     }
 
@@ -82,9 +106,7 @@ esp_err_t read_nvs_memory(const char* name, const char* key, char* out_data, uin
     return err;
 }
 
-
-// [Á¤¼öÇü ¾²±â ÇÔ¼ö]
-
+// [ì •ìˆ˜í˜• ì“°ê¸° í•¨ìˆ˜]
 void write_nvs_uint(const char* name, const char* key, uint32_t value)
 {
     nvs_handle_t my_handle;
@@ -92,26 +114,24 @@ void write_nvs_uint(const char* name, const char* key, uint32_t value)
 
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return;
     }
 
-    // ?? Á¤¼ö ÀúÀå ÇÔ¼ö´Â nvs_set_i32 ¸¦ »ç¿ëÇÕ´Ï´Ù.
     err = nvs_set_u32(my_handle, key, value);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] Á¤¼ö ÀúÀå ¼º°ø: %d", name, key, value);
+        ESP_LOGI(TAG, "[%s -> %s] ì •ìˆ˜ ì €ì¥ ì„±ê³µ: %d", name, key, value);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] Á¤¼ö ÀúÀå ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] ì •ìˆ˜ ì €ì¥ ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     err = nvs_commit(my_handle);
-    if (err != ESP_OK) ESP_LOGE(TAG, "Ä¿¹Ô ½ÇÆĞ!");
+    if (err != ESP_OK) ESP_LOGE(TAG, "ì»¤ë°‹ ì‹¤íŒ¨!");
 
     nvs_close(my_handle);
 }
 
-// [Á¤¼öÇü ÀĞ±â ÇÔ¼ö]
-// ±âº»°ªÀ» ¸Å°³º¯¼ö(default_value)·Î ÁÖ¸é, ÀúÀåµÈ °Ô ¾øÀ» ¶§ ¾ÈÀüÇÏ°Ô ±× °ªÀ» ¸®ÅÏÇÕ´Ï´Ù.
+// [ì •ìˆ˜í˜• ì½ê¸° í•¨ìˆ˜]
 esp_err_t read_nvs_uint(const char* name, const char* key, uint32_t* default_value)
 {
     nvs_handle_t my_handle;
@@ -119,26 +139,25 @@ esp_err_t read_nvs_uint(const char* name, const char* key, uint32_t* default_val
 
     err = nvs_open(name, NVS_READONLY, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return err; 
     }
 
-    // ?? Á¤¼ö ÀĞ±â ÇÔ¼ö´Â nvs_get_i32 ¸¦ »ç¿ëÇÏ¸ç, Å©±â È®ÀÎ ÇÊ¿ä ¾øÀÌ ¹Ù·Î ÀĞ½À´Ï´Ù!
     err = nvs_get_u32(my_handle, key, default_value);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] Á¤¼ö ÀĞ±â ¼º°ø: %d", name, key, *default_value);
+        ESP_LOGI(TAG, "[%s -> %s] ì •ìˆ˜ ì½ê¸° ì„±ê³µ: %d", name, key, *default_value);
     } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "[%s -> %s] ÀúÀåµÈ Á¤¼ö°¡ ¾ø¾î ±âº»°ª(%d)À» »ç¿ëÇÕ´Ï´Ù.", name, key, *default_value);
+        ESP_LOGW(TAG, "[%s -> %s] ì €ì¥ëœ ì •ìˆ˜ê°€ ì—†ì–´ ê¸°ë³¸ê°’(%d)ì„ ì‚¬ìš©í•©ë‹ˆë‹¤.", name, key, *default_value);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] Á¤¼ö ÀĞ±â ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] ì •ìˆ˜ ì½ê¸° ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     nvs_close(my_handle);
 
-    return err; // ÀĞ¾î¿Â °ª(¶Ç´Â ±âº»°ª) ¸®ÅÏ
+    return err;
 }
-// [Á¤¼öÇü ¾²±â ÇÔ¼ö]
 
+// [ì •ìˆ˜í˜• ì“°ê¸° í•¨ìˆ˜ (signed)]
 void write_nvs_int(const char* name, const char* key, int32_t value)
 {
     nvs_handle_t my_handle;
@@ -146,55 +165,50 @@ void write_nvs_int(const char* name, const char* key, int32_t value)
 
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return;
     }
 
-    // ?? Á¤¼ö ÀúÀå ÇÔ¼ö´Â nvs_set_i32 ¸¦ »ç¿ëÇÕ´Ï´Ù.
     err = nvs_set_i32(my_handle, key, value);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] Á¤¼ö ÀúÀå ¼º°ø: %ld", name, key, value);
+        ESP_LOGI(TAG, "[%s -> %s] ì •ìˆ˜ ì €ì¥ ì„±ê³µ: %ld", name, key, value);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] Á¤¼ö ÀúÀå ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] ì •ìˆ˜ ì €ì¥ ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     err = nvs_commit(my_handle);
-    if (err != ESP_OK) ESP_LOGE(TAG, "Ä¿¹Ô ½ÇÆĞ!");
+    if (err != ESP_OK) ESP_LOGE(TAG, "ì»¤ë°‹ ì‹¤íŒ¨!");
 
     nvs_close(my_handle);
 }
 
-// [Á¤¼öÇü ÀĞ±â ÇÔ¼ö]
-// ±âº»°ªÀ» ¸Å°³º¯¼ö(default_value)·Î ÁÖ¸é, ÀúÀåµÈ °Ô ¾øÀ» ¶§ ¾ÈÀüÇÏ°Ô ±× °ªÀ» ¸®ÅÏÇÕ´Ï´Ù.
+// [ì •ìˆ˜í˜• ì½ê¸° í•¨ìˆ˜ (signed)]
 int32_t read_nvs_int(const char* name, const char* key, int32_t default_value)
 {
     nvs_handle_t my_handle;
     esp_err_t err;
-    int32_t out_value = default_value; // ÃÊ±â°ªÀº ±âº»°ªÀ¸·Î ¼¼ÆÃ
+    int32_t out_value = default_value;
 
     err = nvs_open(name, NVS_READONLY, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return default_value; 
     }
 
-    // ?? Á¤¼ö ÀĞ±â ÇÔ¼ö´Â nvs_get_i32 ¸¦ »ç¿ëÇÏ¸ç, Å©±â È®ÀÎ ÇÊ¿ä ¾øÀÌ ¹Ù·Î ÀĞ½À´Ï´Ù!
     err = nvs_get_i32(my_handle, key, &out_value);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] Á¤¼ö ÀĞ±â ¼º°ø: %ld", name, key, out_value);
+        ESP_LOGI(TAG, "[%s -> %s] ì •ìˆ˜ ì½ê¸° ì„±ê³µ: %ld", name, key, out_value);
     } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "[%s -> %s] ÀúÀåµÈ Á¤¼ö°¡ ¾ø¾î ±âº»°ª(%ld)À» »ç¿ëÇÕ´Ï´Ù.", name, key, default_value);
+        ESP_LOGW(TAG, "[%s -> %s] ì €ì¥ëœ ì •ìˆ˜ê°€ ì—†ì–´ ê¸°ë³¸ê°’(%ld)ì„ ì‚¬ìš©í•©ë‹ˆë‹¤.", name, key, default_value);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] Á¤¼ö ÀĞ±â ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] ì •ìˆ˜ ì½ê¸° ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     nvs_close(my_handle);
-    return out_value; // ÀĞ¾î¿Â °ª(¶Ç´Â ±âº»°ª) ¸®ÅÏ
+    return out_value;
 }
 
-
-
-// [±¸Á¶Ã¼/¹ÙÀÌ³Ê¸® ¾²±â ÇÔ¼ö]
+// [êµ¬ì¡°ì²´/ë°”ì´ë„ˆë¦¬ ì“°ê¸° í•¨ìˆ˜]
 void write_nvs_blob(const char* name, const char* key, const void* blob_data, size_t length)
 {
     nvs_handle_t my_handle;
@@ -202,25 +216,24 @@ void write_nvs_blob(const char* name, const char* key, const void* blob_data, si
 
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return;
     }
 
-    // ?? ±¸Á¶Ã¼ °°Àº ¹ÙÀÌ³Ê¸®´Â nvs_set_blob À» »ç¿ëÇÕ´Ï´Ù.
     err = nvs_set_blob(my_handle, key, blob_data, length);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "[%s -> %s] ±¸Á¶Ã¼ ÀúÀå ¼º°ø (%d ¹ÙÀÌÆ®)", name, key, length);
+        ESP_LOGI(TAG, "[%s -> %s] êµ¬ì¡°ì²´ ì €ì¥ ì„±ê³µ (%d ë°”ì´íŠ¸)", name, key, length);
     } else {
-        ESP_LOGE(TAG, "[%s -> %s] ±¸Á¶Ã¼ ÀúÀå ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s -> %s] êµ¬ì¡°ì²´ ì €ì¥ ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
     }
 
     err = nvs_commit(my_handle);
-    if (err != ESP_OK) ESP_LOGE(TAG, "Ä¿¹Ô ½ÇÆĞ!");
+    if (err != ESP_OK) ESP_LOGE(TAG, "ì»¤ë°‹ ì‹¤íŒ¨!");
 
     nvs_close(my_handle);
 }
 
-// [±¸Á¶Ã¼/¹ÙÀÌ³Ê¸® ÀĞ±â ÇÔ¼ö]
+// [êµ¬ì¡°ì²´/ë°”ì´ë„ˆë¦¬ ì½ê¸° í•¨ìˆ˜]
 esp_err_t read_nvs_blob(const char* name, const char* key, void* out_blob, size_t max_length)
 {
     nvs_handle_t my_handle;
@@ -228,35 +241,31 @@ esp_err_t read_nvs_blob(const char* name, const char* key, void* out_blob, size_
 
     err = nvs_open(name, NVS_READONLY, &my_handle);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "[%s] NVS ¿­±â ½ÇÆĞ (%s)", name, esp_err_to_name(err));
+        ESP_LOGE(TAG, "[%s] NVS ì—´ê¸° ì‹¤íŒ¨ (%s)", name, esp_err_to_name(err));
         return err;
     }
 
-    // 1. ÀúÀåµÈ BLOBÀÇ ½ÇÁ¦ Å©±â È®ÀÎ
     size_t required_size = 0;
     err = nvs_get_blob(my_handle, key, NULL, &required_size);
 
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW(TAG, "[%s -> %s] ÀúÀåµÈ ±¸Á¶Ã¼ µ¥ÀÌÅÍ°¡ ¾ø½À´Ï´Ù.", name, key);
+        ESP_LOGW(TAG, "[%s -> %s] ì €ì¥ëœ êµ¬ì¡°ì²´ ë°ì´í„°ê°€ ì—†ìŠµë‹ˆë‹¤.", name, key);
         nvs_close(my_handle);
         return err;
     }
 
-    // 2. ½ÇÁ¦ ÀĞ±â ´Ü°è
     if (err == ESP_OK && required_size > 0) {
-        // ³»º¸³¾ ±×¸©º¸´Ù NVS µ¥ÀÌÅÍ°¡ Å©¸é ¿À¹öÇÃ·Î¿ì ¹æÁö
         if (required_size > max_length) {
-            ESP_LOGE(TAG, "±¸Á¶Ã¼ ¹öÆÛ Å©±â ºÎÁ· (ÇÊ¿ä: %d, ±×¸©: %d)", required_size, max_length);
+            ESP_LOGE(TAG, "êµ¬ì¡°ì²´ ë²„í¼ í¬ê¸° ë¶€ì¡± (í•„ìš”: %d, ê·¸ë¦‡: %d)", required_size, max_length);
             nvs_close(my_handle);
             return ESP_ERR_INVALID_SIZE;
         }
 
-        // ½ÇÁ¦ ±¸Á¶Ã¼ Æ÷ÀÎÅÍ¿¡ µ¥ÀÌÅÍ º¹»ç
         err = nvs_get_blob(my_handle, key, out_blob, &required_size);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "[%s -> %s] ±¸Á¶Ã¼ ÀĞ±â ¼º°ø (%d ¹ÙÀÌÆ®)", name, key, required_size);
+            ESP_LOGI(TAG, "[%s -> %s] êµ¬ì¡°ì²´ ì½ê¸° ì„±ê³µ (%d ë°”ì´íŠ¸)", name, key, required_size);
         } else {
-            ESP_LOGE(TAG, "[%s -> %s] ±¸Á¶Ã¼ ÀĞ±â ½ÇÆĞ (%s)", name, key, esp_err_to_name(err));
+            ESP_LOGE(TAG, "[%s -> %s] êµ¬ì¡°ì²´ ì½ê¸° ì‹¤íŒ¨ (%s)", name, key, esp_err_to_name(err));
         }
     }
 
@@ -269,19 +278,16 @@ void delete_nvs_key(const char* name, const char* key)
     nvs_handle_t my_handle;
     esp_err_t err;
 
-    // 1. ¼öÁ¤ÇØ¾ß ÇÏ¹Ç·Î NVS_READWRITE ¸ğµå·Î ¿­±â
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) return;
 
-    // 2. ?? Æ¯Á¤ Key »èÁ¦ ÇÔ¼ö È£Ãâ
     err = nvs_erase_key(my_handle, key);
     if (err == ESP_OK) {
-        ESP_LOGI("NVS", "[%s] Key »èÁ¦ ¼º°ø", key);
+        ESP_LOGI("NVS", "[%s] Key ì‚­ì œ ì„±ê³µ", key);
     } else if (err == ESP_ERR_NVS_NOT_FOUND) {
-        ESP_LOGW("NVS", "[%s] Áö¿ì·Á°í º¸´Ï ¿ø·¡ ¾ø´Â Key¿´½À´Ï´Ù.", key);
+        ESP_LOGW("NVS", "[%s] ì§€ìš°ë ¤ê³  ë³´ë‹ˆ ì›ë˜ ì—†ëŠ” Keyì˜€ìŠµë‹ˆë‹¤.", key);
     }
 
-    // 3. Áö¿ü´Ù´Â »ç½ÇÀ» ÃÖÁ¾ Ä¿¹Ô(ÇÃ·¡½Ã¿¡ ¹İ¿µ)ÇÏ°í ´İ±â
     nvs_commit(my_handle);
     nvs_close(my_handle);
 }
@@ -291,20 +297,14 @@ void delete_nvs_namespace(const char* name)
     nvs_handle_t my_handle;
     esp_err_t err;
 
-    // 1. NVS_READWRITE ¸ğµå·Î ¿­±â
     err = nvs_open(name, NVS_READWRITE, &my_handle);
     if (err != ESP_OK) return;
 
-    // 2. ?? ÇØ´ç Namespace ¾ÈÀÇ ¸ğµç Key ÀÏ°ı »èÁ¦!
     err = nvs_erase_all(my_handle);
     if (err == ESP_OK) {
-        ESP_LOGI("NVS", "[%s] ³×ÀÓ½ºÆäÀÌ½º ÀüÃ¼ »èÁ¦ ¼º°ø (ÃÊ±âÈ­ ¿Ï·á)", name);
+        ESP_LOGI("NVS", "[%s] ë„¤ì„ìŠ¤í˜ì´ìŠ¤ ì „ì²´ ì‚­ì œ ì„±ê³µ (ì´ˆê¸°í™” ì™„ë£Œ)", name);
     }
 
-    // 3. Ä¿¹Ô ÈÄ ÇÚµé ´İ±â
     nvs_commit(my_handle);
     nvs_close(my_handle);
 }
-
-
-

@@ -103,7 +103,6 @@ void simple_ota_example_task(void *pvParameter)
     char *url_ptr = (char *)pvParameter;
 
     ESP_LOGI(TAG, "Starting OTA example task");
-    uint8_t state = 2;
 
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_BIND_IF
     esp_netif_t *netif = get_example_netif_from_desc(bind_interface_name);
@@ -208,16 +207,12 @@ void ota_main(const char* URL)
         return;
     }
     esp_log_level_set("esp_https_ota", ESP_LOG_DEBUG);
-    // static char URL_Buffer[200];
-    // memset(URL_Buffer, 0, sizeof(URL_Buffer));
-    // strncpy(URL_Buffer, URL, sizeof(URL_Buffer) - 1);
 
     char *url_buf = strdup(URL); 
     if (url_buf == NULL) { 
         ESP_LOGE(TAG, "OTA URL 메모리 할당 실패."); 
         return; 
     }
-
 
     get_sha256_of_partitions();
 #if CONFIG_EXAMPLE_CONNECT_WIFI
@@ -227,7 +222,6 @@ void ota_main(const char* URL)
     esp_wifi_set_ps(WIFI_PS_NONE);
 #endif // CONFIG_EXAMPLE_CONNECT_WIFI
 
-    TaskHandle_t xHandle = NULL;
     ESP_LOGI(TAG,"simple_ota_example_task task_start");
     if (xTaskCreatePinnedToCore(
             simple_ota_example_task,                  // 태스크 함수
@@ -238,6 +232,7 @@ void ota_main(const char* URL)
             &xOTA_Handle,                  // 태스크 핸들
             1                          // ⭐ 코어 ID (1번 코어 = APP_CPU)
         ) != pdPASS)                 // pdTRUE 대신 pdPASS를 쓰는 것이 FreeRTOS 관례입니다.
-    {              ESP_LOGE(TAG, "Error creating ota_example_task on Core 1");
+    {
+        ESP_LOGE(TAG, "Error creating ota_example_task on Core 1");
     }
 }

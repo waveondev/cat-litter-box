@@ -20,13 +20,9 @@ void send_led_cmd_msg(void *message, uint32_t cmd)
 	message_t *msg = (message_t *)message;
     msg->cmd = cmd;
     BaseType_t status = xQueueSend(led_cmd_msg, msg, pdMS_TO_TICKS(100));
-    if (status == pdPASS) 
+    if (status != pdPASS) 
     {
-//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
-    } 
-    else 
-    {
-//        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
+        // QUEUE FULL
     }
 }
 
@@ -104,7 +100,6 @@ static int led_animation(int mode, int color)
 {
 	if(mode == 0)
 	{
-		// init
 		ani_color = 0;
 		ani_dir = 0;
 	}
@@ -135,7 +130,6 @@ static int led_animation(int mode, int color)
 
 static int led_full_off(void)
 {
-    // �ʱ�ȭ ���� ��� LED ����
     led_strip_clear(led_strip);
     return 0;
 }
@@ -152,8 +146,6 @@ static int set_led_opmode(int mode)
 
 void led_process_task(void *arg)
 {
-//	ESP_LOGI(TAG, "%s +", __func__);
-	
     while (1)
     {
     	switch(led_mode)
@@ -332,7 +324,7 @@ void led_process_task(void *arg)
 
 			case LED_CLEANING_MODE:
 				led_animation(0, 0);
-				led_animation(1, 2);
+				led_animation(1, 2); // Blue 색상 애니메이션
 				set_led_opmode(LED_CLEANING_MODE_1);
 				break;
 			case LED_CLEANING_MODE_1:
@@ -451,12 +443,36 @@ void led_process_task(void *arg)
                 elapsed = (end_tm - start_tm) / 1000; 
                 if (elapsed >= 300) 
                 {
-//                    led_full_off();
                     led_full_white();
                     set_led_opmode(LED_IDLE_MODE);
                 }
                 break;
-				
+
+            /* ⭐ 신규 추가: 일시정지 시 노란색(Yellow) 500ms 점멸 연출 */
+            case LED_PAUSE_MODE:
+                led_full_rgbw_color(4, 255); // Yellow ON
+                start_tm = esp_timer_get_time();
+                set_led_opmode(LED_PAUSE_MODE_1);
+                break;
+            case LED_PAUSE_MODE_1:
+                end_tm = esp_timer_get_time();
+                elapsed = (end_tm - start_tm) / 1000; 
+                if (elapsed >= 500) 
+                {
+                    led_full_off();
+                    start_tm = esp_timer_get_time();
+                    set_led_opmode(LED_PAUSE_MODE_2);
+                }
+                break;
+            case LED_PAUSE_MODE_2:
+                end_tm = esp_timer_get_time();
+                elapsed = (end_tm - start_tm) / 1000; 
+                if (elapsed >= 500) 
+                {
+                    set_led_opmode(LED_PAUSE_MODE);
+                }
+                break;
+
 			default:
 				break;
     	}
@@ -471,7 +487,6 @@ void led_task(void *arg)
     while (1) {
         message_t msg;
         if (xQueueReceive(led_cmd_msg, &msg, portMAX_DELAY) == pdPASS) {
-//          ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
             switch((int)(msg.cmd))
             {
                 case LED_IDLE_CMD:
@@ -513,8 +528,10 @@ void led_task(void *arg)
                 case LED_QCQUIT_CMD:
                 	set_led_opmode(LED_QCQUIT_MODE);
                 	break;
+                case LED_PAUSE_CMD:               // ⭐ 신규 추가
+                	set_led_opmode(LED_PAUSE_MODE);
+                	break;
 
-                
                 default:
                 	break;
             }
@@ -531,7 +548,6 @@ void led_init(void)
         .max_leds = LED_STRIP_MAX_LEDS,
         .led_model = LED_MODEL_SK6812, 
         .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRBW,
-
         .flags = {
             .invert_out = false,
         }
@@ -555,5 +571,4 @@ void led_init(void)
 
     xTaskCreate(led_task, "led_task", 3072, NULL, 10, NULL);
     xTaskCreate(led_process_task, "led_process_task", 3072, NULL, 10, NULL);
-
 }

@@ -1,21 +1,21 @@
 #include "ble_parse.h"
-#include "esp_mac.h" // MAC 주소 관련 API 헤더
+#include "esp_mac.h"        // MAC 주소 관련 API 헤더
 #include "wifi_task.h"
 #include "ble_task.h"
 #include "app_config_flash.h"
-#include "wifi_task.h"
 #include "http_ota.h"
-#include "cJSON.h"         // ESP-IDF 내장 JSON 파서
-#include "ble_crypto.h"    // BLE 암호화 모듈
+#include "cJSON.h"            // ESP-IDF 내장 JSON 파서
+#include "ble_crypto.h"       // BLE 암호화 모듈
 #include "mbedtls/base64.h"
 #include "mbedtls/gcm.h"
 #include "esp_random.h"
 #include "aws_iot_task.h"
-#define OTA_URL "https://evtago.s3.ap-northeast-2.amazonaws.com/loopoo.bin"
-// 분할 전송 시 사용할 MTU 사이즈를 저장할 전역/정적 변수 [앱에서 받을 수 있는 ble의 사이즈를 저장]
+
+// C-100 전용 S3 OTA URL 경로 설정
+#define OTA_URL "https://evtago.s3.ap-northeast-2.amazonaws.com/cat_litter_box_c100.bin"
 
 uint8_t* get_ble_session_key(void);
-extern uint16_t g_ble_max_payload; // ble로 보낼 수 있는 MTU 사이즈 저장 변수
+extern uint16_t g_ble_max_payload; // BLE로 보낼 수 있는 MTU 사이즈 저장 변수
 extern volatile bool g_start_ota_flag;
 
 /**
@@ -99,11 +99,11 @@ void ble_send_encrypted_event(const char* event_type, const char* plain_data) {
                               iv, sizeof(iv), NULL, 0, 
                               (const unsigned char*)plain_data, 
                               ciphertext, sizeof(tag), tag);
-// 3. IV, Ciphertext, Tag를 Base64로 인코딩
+
+    // 3. IV, Ciphertext, Tag를 Base64로 인코딩
     size_t iv_b64_len, ct_b64_len, tag_b64_len;
     unsigned char iv_b64[32] = {0}, tag_b64[32] = {0};
     
-    // Base64 인코딩 결과물 크기는 보통 입력 크기의 약 1.33배에 여유 패딩을 주면 충분합니다.
     size_t ct_b64_alloc_len = plain_len * 2 + 16;
     unsigned char *ct_b64 = (unsigned char *)malloc(ct_b64_alloc_len); 
     if (ct_b64 == NULL) {
@@ -147,7 +147,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
     char buf[256];
     if(len >= sizeof(buf))
         len = sizeof(buf) - 1;
-    printf("Code = %s \r\n",data);
+    printf("Code = %s \r\n", data);
     memcpy(buf, data, len);
     buf[len] = '\0';
 
@@ -181,7 +181,7 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
 
                         char dev_pub_key_b64[64] = {0};
                         
-                        // 1. 디바이스 공개키 생성[cite: 7]
+                        // 1. 디바이스 공개키 생성
                         if (ble_crypto_init_and_get_pubkey(dev_pub_key_b64, sizeof(dev_pub_key_b64)) == ESP_OK) {
                             
                             // 2. 앱 공개키를 사용해 AES 세션키 도출
@@ -232,7 +232,8 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
                     }
                     free(plaintext); // 사용이 끝난 평문 메모리는 반드시 해제!
                 }
-            }// [D] Scan Wi-Fi
+            }
+            // [D] Scan Wi-Fi
             else if (strcmp(event_type->valuestring, "scan_wifi") == 0) {
                 uint16_t ap_count = wifi_scan_start();
                 printf("[BLE_SEC] 와이파이 스캔 완료! 총 %d 개 발견\n", ap_count);
@@ -241,13 +242,12 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
                 cJSON *aps_array = cJSON_CreateArray();
                 cJSON_AddItemToObject(data_obj, "aps", aps_array);
 
-                //가장 신호가 좋은 최대 10개만 전송하자! 암호화로 데이터가 길어짐.
+                // 신호가 가장 좋은 최대 10개 전송
                 uint16_t max_aps = (ap_count > 10) ? 10 : ap_count;
 
                 for (int i = 0; i < max_aps; i++) {
                     cJSON *ap_item = cJSON_CreateObject();
                     
-                    // 유나님의 ap_list 에서 데이터 추출!
                     cJSON_AddStringToObject(ap_item, "ssid", (char *)ap_list[i].ssid);
                     cJSON_AddNumberToObject(ap_item, "rssi", ap_list[i].rssi);
                     
@@ -263,26 +263,24 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
                         default: auth_str = "open"; break;
                     }
                     cJSON_AddStringToObject(ap_item, "auth", auth_str);
-                    
                     cJSON_AddItemToArray(aps_array, ap_item);
                 }
                 
-                // 4. JSON 문자열로 변환
                 char *plain_data = cJSON_PrintUnformatted(data_obj);
                 if (plain_data) {
                     printf("[BLE_SEC] 암호화 전 스캔 결과(평문): %s\n", plain_data);
-                    
-                    // JSON String 암호화
                     ble_send_encrypted_event("wifi_list", plain_data);
                     free(plain_data);
                 } else if (ap_count == 0) {
-                    // 검색된 AP가 없을 때의 예외 처리
                     ble_send_encrypted_event("wifi_list", "{\"aps\":[]}");
                 }
                 
+                // 💡 [수정/보완] 스캔 완료 후 메모리 누수 방지를 위해 해제 함수 복원
+                wifi_list_clear(); 
                 cJSON_Delete(data_obj);
 
-            }// [F] wifi_prov
+            }
+            // [E] wifi_prov
             else if (strcmp(event_type->valuestring, "wifi_prov") == 0) {
                 printf("[BLE_SEC] wifi_prov 블록 진입 성공 (와이파이 연결 처리)\n");
 
@@ -301,18 +299,12 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
 
                             printf("[BLE_SEC] 연결 시작 ➔ SSID: %s\n", ssid);
                             app_wifi_config_t* wifi_config = get_wifi_config();
-                            memset(wifi_config->conn_ssid, 0,
-                                sizeof(wifi_config->conn_ssid));
-                            memset(wifi_config->conn_password, 0,
-                                sizeof(wifi_config->conn_password));
-                            strncpy((char*)wifi_config->conn_ssid,
-                                    ssid,
-                                    sizeof(wifi_config->conn_ssid)-1);
-                            strncpy((char*)wifi_config->conn_password,
-                                    pwd,
-                                    sizeof(wifi_config->conn_password)-1);
+                            memset(wifi_config->conn_ssid, 0, sizeof(wifi_config->conn_ssid));
+                            memset(wifi_config->conn_password, 0, sizeof(wifi_config->conn_password));
+                            strncpy((char*)wifi_config->conn_ssid, ssid, sizeof(wifi_config->conn_ssid)-1);
+                            strncpy((char*)wifi_config->conn_password, pwd, sizeof(wifi_config->conn_password)-1);
 
-                            // 유나님의 기존 연결 로직 구동
+                            // 연결 로직 구동
                             Wifi_Connect(ssid, pwd);
 
                             // 결과 판정 및 ACK 전송
@@ -328,16 +320,16 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
                         }
                         cJSON_Delete(prov_json);
                     }
-                    free(plaintext); // 💡 사용이 끝난 평문 메모리는 반드시 해제!
+                    free(plaintext); // 평문 메모리 해제
                 }
             }
         }
         
         cJSON_Delete(root); // JSON 메모리 해제
-        return; // JSON 처리 완료 시 함수 종료 (아래 텍스트 파싱 생략)
+        return; 
     }
 
-    // scan 명령
+    // CLI scan 커맨드
     if(strcmp(buf, "scan") == 0)
     {
         wifi_scan_start();
@@ -345,36 +337,27 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
     }
 
     buf[strcspn(buf, "\r\n")] = 0;
-    printf("cmd   : %s\n", OTA_URL);
     if(strcmp(buf, "OTA") == 0)
     {
-        ESP_LOGE("ble_parse", "OTA 명령 수신! 메인 루프에 OTA 실행을 요청합니다.");
-
-        //ota_main(OTA_URL);
-        g_start_ota_flag = true;  // OTA 함수 직접 실행 대신 플래그만 ON!
+        ESP_LOGE("ble_parse", "OTA 명령 수신! S3 (%s)로부터 OTA 실행을 요청합니다.", OTA_URL);
+        g_start_ota_flag = true;  // OTA 플래그 세팅
         return;
-
-        //return;
     }
-
 
     char *cmd;
     char *index;
     char *ssid;
     char *pass;
 
-
     cmd = strtok(buf, " ");
     index = strtok(NULL, " ");
     ssid = strtok(NULL, " ");
     pass = strtok(NULL, " \r\n");
 
-
     printf("cmd   : %s\n", cmd ? cmd : "NULL");
     printf("index : %s\n", index ? index : "NULL");
     printf("ssid  : %s\n", ssid ? ssid : "NULL");
     printf("pass  : %s\n", pass ? pass : "NULL");
-
 
     if(cmd && strcmp(cmd, "CONNECT_AP") == 0)
     {
@@ -384,47 +367,33 @@ void BLE_APP_Command(uint8_t* data, uint16_t len)
             return;
         }
 
-
         printf("SSID=%s PASS=%s\n", ssid, pass);
-
 
         app_wifi_config_t* wifi_config = get_wifi_config();
 
+        memset(wifi_config->conn_ssid, 0, sizeof(wifi_config->conn_ssid));
+        memset(wifi_config->conn_password, 0, sizeof(wifi_config->conn_password));
 
-        memset(wifi_config->conn_ssid, 0,
-            sizeof(wifi_config->conn_ssid));
-
-        memset(wifi_config->conn_password, 0,
-            sizeof(wifi_config->conn_password));
-
-
-        strncpy((char*)wifi_config->conn_ssid,
-                ssid,
-                sizeof(wifi_config->conn_ssid)-1);
-
-        strncpy((char*)wifi_config->conn_password,
-                pass,
-                sizeof(wifi_config->conn_password)-1);
+        strncpy((char*)wifi_config->conn_ssid, ssid, sizeof(wifi_config->conn_ssid)-1);
+        strncpy((char*)wifi_config->conn_password, pass, sizeof(wifi_config->conn_password)-1);
 
         wifi_nvs_save_set();
-        Wifi_Connect(ssid,pass);
+        Wifi_Connect(ssid, pass);
         printf("저장 완료\n");
     }
 }
+
 static uint32_t total_count = 0;
 static uint32_t input_count = 0;
 static esp_timer_handle_t Motion_Timeout_timer = NULL;
-// 1초 뒤 타이머가 만료되면 실행될 콜백 함수
+
 static void Motion_Timeout_callback(void* arg)
 {
-    //ESP_LOGI(TAG, "3초 동안 추가 입력이 없어 현재 모드로 확정합니다: %d", current_opmode);
-
-    motion_msg_send(MOTION_START_REQUEST,2);
-    // TODO: 여기에 모드가 최종 확정되었을 때 실행할 동작(예: 화면 갱신, 실제 하드웨어 제어 등)을 넣으세요.
+    motion_msg_send(MOTION_START_REQUEST, 2);
 }
+
 void Motion_Timer_Set(bool state)
 {
-                // 2. 타이머가 처음 호출된 거라면 타이머를 생성
     if (Motion_Timeout_timer == NULL) {
         const esp_timer_create_args_t timer_args = {
             .callback = &Motion_Timeout_callback,
@@ -433,8 +402,6 @@ void Motion_Timer_Set(bool state)
         esp_timer_create(&timer_args, &Motion_Timeout_timer);
     }
 
-    // 💡 이미 타이머가 존재한다는 뜻은, 이전에 버튼을 누른 적이 있다는 것!
-    // 즉, 1초 이내에 다시 들어왔을 확률이 높으므로 기존 타이머를 멈춤.
     if (esp_timer_is_active(Motion_Timeout_timer)) {
         esp_timer_stop(Motion_Timeout_timer);
     }
@@ -458,17 +425,16 @@ void BLE_Receive_data(uint8_t* mac, uint8_t* data, uint16_t len)
     switch(Motion_Packet->event_code)
     {   
         case MOTION_START_RESPONSE:
-            printf("interval = %d Len = %d",Motion_Packet->motion_req.interval, Motion_Packet->motion_req.total_points);                    
+            printf("interval = %d Len = %d", Motion_Packet->motion_req.interval, Motion_Packet->motion_req.total_points);                    
             if(Motion_Packet->motion_req.total_points != 0)
             {
-                    total_count = Motion_Packet->motion_req.total_points + (9-(Motion_Packet->motion_req.total_points%9));
-                    input_count = 0;
-                    Motion_Timer_Set(true);
+                total_count = Motion_Packet->motion_req.total_points + (9 - (Motion_Packet->motion_req.total_points % 9));
+                input_count = 0;
+                Motion_Timer_Set(true);
             }
-            
-        break;
-        case MOTION_DATA:
+            break;
 
+        case MOTION_DATA:
             input_count += 9;
             printf("seq = %d\n", Motion_Packet->motion_data.seq);
 
@@ -481,54 +447,45 @@ void BLE_Receive_data(uint8_t* mac, uint8_t* data, uint16_t len)
             printf("data6: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_6.bit.type, Motion_Packet->motion_data.pack_data_6.bit.data, Motion_Packet->motion_data.pack_data_6.word);
             printf("data7: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_7.bit.type, Motion_Packet->motion_data.pack_data_7.bit.data, Motion_Packet->motion_data.pack_data_7.word);
             printf("data8: type=%d, data=%d (word=%d)\n", Motion_Packet->motion_data.pack_data_8.bit.type, Motion_Packet->motion_data.pack_data_8.bit.data, Motion_Packet->motion_data.pack_data_8.word);
-            tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY,mac, Motion_Packet, 0, NULL);
+            
+            tracker_mqtt_queue_send(TRACKER_MESSEGE_ACTIVITY, mac, Motion_Packet, 0, NULL);
             if(input_count == total_count)
             {
-                motion_msg_send(MOTION_DATA_ACK,Motion_Packet->motion_data.seq);
+                motion_msg_send(MOTION_DATA_ACK, Motion_Packet->motion_data.seq);
             }
             else
                 Motion_Timer_Set(true);
-        break;
+            break;
+
         case HEALTH_DATA_RESPONSE:
-                    // event_code 및 health_data_res 내부 구조체 포인터
-                // health_data_res 구조체 직접 접근
-    
+            printf("\n================ [ Health Data Res ] ================\n");
+            printf(" Event Code    : 0x%02X (%u)\n", Motion_Packet->event_code, Motion_Packet->event_code);
+            printf(" Struct Size   : %d bytes (Expected: 19 bytes)\n", sizeof(Motion_Packet->health_data_res));
+            printf(" Total Packet  : %d bytes (Expected: 20 bytes)\n", sizeof(Motion_Packet_t));
+            printf("-----------------------------------------------------\n");
+            printf(" Uptime        : %lu sec (%lu hours %lu min)\n", 
+                    (unsigned long)Motion_Packet->health_data_res.uptime_sec, 
+                    (unsigned long)(Motion_Packet->health_data_res.uptime_sec / 3600), 
+                    (unsigned long)((Motion_Packet->health_data_res.uptime_sec % 3600) / 60));
+                    
+            printf(" Bat Level     : %u %%\n", Motion_Packet->health_data_res.Bat_Level);
+            printf(" Bat Voltage   : %u (e.g. %u.%uV)\n", 
+                    Motion_Packet->health_data_res.Bat_Voltage, Motion_Packet->health_data_res.Bat_Voltage / 10, Motion_Packet->health_data_res.Bat_Voltage % 10);
+                    
+            printf(" FW Version    : v%u.%u.%u\n", Motion_Packet->health_data_res.major, Motion_Packet->health_data_res.minor, Motion_Packet->health_data_res.patch);
+            printf(" Target RSSI   : %d dBm\n", Motion_Packet->health_data_res.target_rssi);
+            
+            printf(" Fault Flag    : 0x%02X (Raw Byte)\n", Motion_Packet->health_data_res.fault_flag.byte);
+            printf("  |- Bat Status  : %u\n", Motion_Packet->health_data_res.fault_flag.bit.Bat_Status);
+            printf("  |- IMU Error   : %u\n", Motion_Packet->health_data_res.fault_flag.bit.IMU_Err);
+            printf("  |- BLE Error   : %u\n", Motion_Packet->health_data_res.fault_flag.bit.BLE_Err);
+            printf("  |- Storage Err : %u\n", Motion_Packet->health_data_res.fault_flag.bit.storage);
+            printf("  |- Reset Reason: %u\n", Motion_Packet->health_data_res.fault_flag.bit.reset_reason);
+            printf("\n=====================================================\n\n");
+            break;
 
-                printf("\n================ [ Health Data Res ] ================\n");
-                printf(" Event Code    : 0x%02X (%u)\n", Motion_Packet->event_code, Motion_Packet->event_code);
-                printf(" Struct Size   : %d bytes (Expected: 19 bytes)\n", sizeof(Motion_Packet->health_data_res));
-                printf(" Total Packet  : %d bytes (Expected: 20 bytes)\n", sizeof(Motion_Packet_t));
-                printf("-----------------------------------------------------\n");
-                printf(" Uptime        : %lu sec (%lu hours %lu min)\n", 
-                        (unsigned long)Motion_Packet->health_data_res.uptime_sec, 
-                        (unsigned long)(Motion_Packet->health_data_res.uptime_sec / 3600), 
-                        (unsigned long)((Motion_Packet->health_data_res.uptime_sec % 3600) / 60));
-                        
-                printf(" Bat Level     : %u %%\n", Motion_Packet->health_data_res.Bat_Level);
-                printf(" Bat Voltage   : %u (e.g. %u.%uV)\n", 
-                        Motion_Packet->health_data_res.Bat_Voltage, Motion_Packet->health_data_res.Bat_Voltage / 10, Motion_Packet->health_data_res.Bat_Voltage % 10);
-                        
-                printf(" FW Version    : v%u.%u.%u\n", Motion_Packet->health_data_res.major, Motion_Packet->health_data_res.minor, Motion_Packet->health_data_res.patch);
-                printf(" Target RSSI   : %d dBm\n", Motion_Packet->health_data_res.target_rssi);
-                
-                // 비트필드 fault_flag 상세 출력
-                printf(" Fault Flag    : 0x%02X (Raw Byte)\n", Motion_Packet->health_data_res.fault_flag.byte);
-                printf("  |- Bat Status  : %u\n", Motion_Packet->health_data_res.fault_flag.bit.Bat_Status);
-                printf("  |- IMU Error   : %u\n", Motion_Packet->health_data_res.fault_flag.bit.IMU_Err);
-                printf("  |- BLE Error   : %u\n", Motion_Packet->health_data_res.fault_flag.bit.BLE_Err);
-                printf("  |- Storage Err : %u\n", Motion_Packet->health_data_res.fault_flag.bit.storage);
-                printf("  |- Reset Reason: %u\n", Motion_Packet->health_data_res.fault_flag.bit.reset_reason);
-                
-                printf("\n=====================================================\n\n");
-                //tracker_mqtt_queue_send(TRACKER_MESSEGE_HEALTH,mac, Motion_Packet);
-        break;
         default:
-            BLE_APP_Command(data,len);
-        break;
-
+            BLE_APP_Command(data, len);
+            break;
     }
-    
-
-
 }
-  //esp_read_mac(MyMac,ESP_MAC_WIFI_STA);

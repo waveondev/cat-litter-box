@@ -1,142 +1,80 @@
 #include "main.h"
+#include "sensor.h"
 
 static const char *TAG = "MOTOR";
 
+// 전역 변수 및 플래그 정의
 static bool spin_mt_always_on = false;
-static QueueHandle_t motor_msg = NULL;
 
 volatile bool emergency_stop_flag = false;
+volatile bool clean_running_flag = false;
+volatile bool clean_pause_flag = false;
+volatile bool clean_resume_recovery_requested = false;
 
-// CHECK_ESTOP 매크로: do_clean 함수 내에서 estop_exit 레이블로 탈출
+// 전방 선언
+static int wait_motor_operation(int sel, int mt, int timeout, int status);
+static void drive_main_cover_soft(int dir, uint32_t target_speed);
+int motor_calibration_recovery(void);
+
 #define CHECK_ESTOP() \
     do { \
-        if (emergency_stop_flag) { \
-            ESP_LOGW(TAG, "Emergency Stop Triggered! Aborting scenario."); \
+        if (emergency_stop_flag || clean_resume_recovery_requested) { \
+            ESP_LOGW(TAG, "Emergency Stop or Recovery Exit Requested! Aborting scenario."); \
             goto estop_exit; \
+        } \
+    } while(0)
+
+#define CHECK_TOF_PAUSE(target_label) \
+    do { \
+        int tof_dist = get_fresh_tof_distance(); \
+        if (tof_dist > 0 && tof_dist <= 550) { \
+            ESP_LOGW(TAG, "================================================="); \
+            ESP_LOGW(TAG, "[TOF SAFETY] Obstacle/Cat Detected! Distance: %d mm (Threshold <= 550 mm)", tof_dist); \
+            ESP_LOGW(TAG, "[TOF SAFETY] FORCING IMMEDIATE PAUSE & STOPPING ALL MOTORS!"); \
+            ESP_LOGW(TAG, "================================================="); \
+            \
+            mt_message_t pause_msg = {0}; \
+            message_t pause_led_msg = {0}; \
+            send_plate_msg(&pause_msg, PLATE_CMD, 0, STOP, 0); \
+            send_scpspin_motor_msg_ex(&pause_msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false); \
+            send_scpinout_msg(&pause_msg, SCP_INOUT_CMD, 0, STOP, 0); \
+            send_waste_motor_msg(&pause_msg, WASTE_COVER_CMD, 0, STOP, 0); \
+            send_main_motor_msg(&pause_msg, MAIN_COVER_CMD, 0, STOP, 0); \
+            send_led_cmd_msg(&pause_led_msg, LED_PAUSE_CMD); \
+            \
+            clean_pause_flag = true; \
+            \
+            while (clean_pause_flag) { \
+                if (emergency_stop_flag || clean_resume_recovery_requested) { \
+                    goto target_label; \
+                } \
+                vTaskDelay(pdMS_TO_TICKS(100)); \
+            } \
+        } else { \
+            ESP_LOGI(TAG, "[TOF SAFETY] Clear! Distance (%d mm) > 550 mm. Safe to proceed.", tof_dist); \
         } \
     } while(0)
 
 int pt_check(int sel, int mt)
 {
-    int ret = 0;
-    if(sel == STEP_MOTOR)
-    {
-        if(mt == WASTE_COVER_MOTOR)
-        {
-            if(get_pt_status() & PT_BIT_WASTE_CLOSE) return -1;
-            else if(get_pt_status() & PT_BIT_WASTE_OPEN) return 1;
+    int status = get_pt_status();
+
+    if (sel == STEP_MOTOR) {
+        if (mt == WASTE_COVER_MOTOR) {
+            if (status & PT_BIT_WASTE_CLOSE) return -1;
+            else if (status & PT_BIT_WASTE_OPEN) return 1;
+        } else if (mt == SCPSPIN_MOTOR) {
+            if ((status & PT_BIT_SCP_SPIN_ST) != 0 && (status & PT_BIT_SCP_SPIN_ED) != 0) return 1;
         }
-    }
-    else if(sel == DC_MOTOR)
-    {
-        if(mt == MAIN_COVER_MOTOR)
-        {
-            if(get_pt_status() & PT_BIT_MCOVER_CLOSE) return -1;
-            else if(get_pt_status() & PT_BIT_MCOVER_OPEN) return 1;
+    } else if (sel == DC_MOTOR) {
+        if (mt == MAIN_COVER_MOTOR) {
+            if (status & PT_BIT_MCOVER_CLOSE) return -1;
+            else if (status & PT_BIT_MCOVER_OPEN) return 1;
         }
-        if(mt == SCPINOUT_MOTOR)
-        {
-            if(get_pt_status() & PT_BIT_SCP_IN) return -1;
-            else if(get_pt_status() & PT_BIT_SCP_OUT) return 1;
+        if (mt == SCPINOUT_MOTOR) {
+            if (status & PT_BIT_SCP_IN) return -1;
+            else if (status & PT_BIT_SCP_OUT) return 1;
         }
-    }
-    return ret;
-}
-
-/**
- * @brief MAIN_COVER DC 모터 초기 고부하/정지마찰 극복용 강파워 소프트 구동 함수
- */
-static void drive_main_cover_soft(int dir, uint32_t target_speed)
-{
-    mt_message_t msg = {0};
-
-    // 1. Pre-Wakeup Wait: 오랜 정지 후 모터 드라이버 IC 전원 안정을 위해 50ms 대기
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    // 2. High-Power Kick Start: 극심한 정지 마찰을 뚫기 위해 100% 듀티를 300ms 동안 강력하게 인가
-    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, dir, 100);
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    // 3. High-Torque Ramp-Up: 70% 듀티부터 목표 속도까지 고토크 유지 및 가속
-    uint32_t start_speed = 70;
-    if (target_speed < start_speed) start_speed = target_speed;
-
-    for (uint32_t duty = start_speed; duty <= target_speed; duty += 10) {
-        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, dir, duty);
-        vTaskDelay(pdMS_TO_TICKS(30));
-    }
-}
-
-/**
- * @brief 모터 동작 및 센서 대기 함수
- * @return 0: 성공(센서 도달 또는 모터 정지), -1: 실패/타임아웃/비상정지
- */
-static int wait_motor_operation(int sel, int mt, int timeout, int status)
-{
-    vTaskDelay(pdMS_TO_TICKS(40));  
-    
-    int64_t start, end, elapsed;
-    start = esp_timer_get_time();
-    int ret = 0;
-    do {
-        if (emergency_stop_flag) return -1;
-    
-        vTaskDelay(pdMS_TO_TICKS(10));
-        ret = pt_check(sel, mt);
-
-        if (ret == 1 && status == MT_OPEN) return 0;
-        else if (ret == -1 && status == MT_CLOSE) return 0;
-        
-        end = esp_timer_get_time();
-        elapsed = (end - start) / 1000;
-        if (elapsed >= timeout) return -1;   
-        
-        if (sel == DC_MOTOR) {
-            if (!get_dcmotor_run(mt)) return 0;
-        } else if (sel == STEP_MOTOR) {
-            if (!get_stepmotor_run(mt)) return 0;
-        }
-    } while(1);
-
-    return -1;
-}
-
-int motor_main_cover_test(int dir)
-{
-#ifdef FEATURE_MAIN_COVER   
-    mt_message_t msg = {0};
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
-    if(dir == 1) {
-        drive_main_cover_soft(FORWARD, 100);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_OPEN);
-        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-    } else if(dir == -1) {
-        drive_main_cover_soft(REVERSE, 100);
-        vTaskDelay(pdMS_TO_TICKS(100));
-        wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_CLOSE);
-        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-    } else {
-        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-    }
-#endif
-    return 0;
-}
-
-int motor_waste_cover_test(int dir)
-{
-    mt_message_t msg = {0};
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
-    if(dir == 1) {
-        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
-        vTaskDelay(pdMS_TO_TICKS(150));
-        wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_OPEN);
-    } else if(dir == -1) {
-        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
-        vTaskDelay(pdMS_TO_TICKS(150));
-        wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_CLOSE);
-    } else {
-        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
     }
     return 0;
 }
@@ -146,27 +84,155 @@ bool check_spin_mt_on(void)
     return spin_mt_always_on;
 }
 
-int wait_duration(int ms)
+bool is_clean_running(void)
+{
+    return clean_running_flag;
+}
+
+void toggle_clean_pause(void)
+{
+    message_t led_msg = {0};
+    mt_message_t msg = {0};
+
+    if (!clean_pause_flag) {
+        clean_pause_flag = true;
+        ESP_LOGW(TAG, "[PAUSE] Cleaning Pause Triggered! Stopping ALL motors...");
+        
+        send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+
+        send_led_cmd_msg(&led_msg, LED_PAUSE_CMD);
+    } else {
+        ESP_LOGI(TAG, "[RESUME] Cleaning Button Pressed during PAUSE. Requesting do_clean Exit & Recovery...");
+        clean_pause_flag = false;
+        clean_resume_recovery_requested = true;
+    }
+}
+
+void set_emergency_stop(void)
+{
+    emergency_stop_flag = true;
+    mt_message_t msg = {0};
+
+    send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+}
+
+void clear_emergency_stop(void)
+{
+    emergency_stop_flag = false;
+}
+
+static void drive_main_cover_soft(int dir, uint32_t target_speed)
+{
+    mt_message_t msg = {0};
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, dir, 100);
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    uint32_t start_speed = 70;
+    if (target_speed < start_speed) start_speed = target_speed;
+
+    for (uint32_t duty = start_speed; duty <= target_speed; duty += 10) {
+        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, dir, duty);
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+static int wait_motor_operation(int sel, int mt, int timeout, int status)
+{
+    vTaskDelay(pdMS_TO_TICKS(150));  
+    
+    int64_t start = esp_timer_get_time();
+
+    do {
+        if (emergency_stop_flag || clean_resume_recovery_requested) return -1;
+
+        while (clean_pause_flag) {
+            if (emergency_stop_flag || clean_resume_recovery_requested) return -1;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+
+        if (emergency_stop_flag || clean_resume_recovery_requested) return -1;
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+        int ret = pt_check(sel, mt);
+
+        bool is_reached = false;
+
+        if (ret == 1 && status == MT_OPEN) is_reached = true;
+        else if (ret == -1 && status == MT_CLOSE) is_reached = true;
+
+        int64_t elapsed_ms = (esp_timer_get_time() - start) / 1000;
+        if (elapsed_ms > 300) {
+            if (sel == DC_MOTOR) {
+                if (!get_dcmotor_run(mt)) is_reached = true;
+            } else if (sel == STEP_MOTOR) {
+                if (!get_stepmotor_run(mt)) is_reached = true;
+            }
+        }
+
+        if (is_reached) {
+            return 0; 
+        }
+
+        if (elapsed_ms >= timeout) return -1;   
+
+    } while(1);
+
+    return -1;
+}
+
+static int wait_duration(int ms)
 {
     int cnt;
-    if(ms < 100) return -1;
+    if (ms < 100) return -1;
     
     cnt = ms / 100;
-    if((ms % 100) != 0) cnt++;
+    if ((ms % 100) != 0) cnt++;
     
     do {
-        if (emergency_stop_flag) return -1;
+        if (emergency_stop_flag || clean_resume_recovery_requested) return -1;
+
+        while (clean_pause_flag) {
+            if (emergency_stop_flag || clean_resume_recovery_requested) return -1;
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+
         vTaskDelay(pdMS_TO_TICKS(100));
-    } while(--cnt > 0);
+    } while (--cnt > 0);
     
     return 0;
 }
 
-static void clear_all_motor_queues(void)
+static int get_fresh_tof_distance(void)
 {
-    if (motor_msg != NULL) {
-        xQueueReset(motor_msg);
+    set_tof_sensor_enable(true);
+    reset_tof_ring_buffer();
+
+    int wait_ms = 0;
+    while (get_tof_ring_count() < 5 && wait_ms < 2000) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        wait_ms += 10;
     }
+
+    int valid_dist = get_tof_distance();
+
+    if (valid_dist >= 0 && valid_dist <= 2000) {
+        ESP_LOGI(TAG, "[TOF RING BUFFER] Valid Distance: %d mm (Samples: %d)", valid_dist, get_tof_ring_count());
+    } else {
+        ESP_LOGW(TAG, "[TOF RING BUFFER] Invalid/Error Distance (%d mm)", valid_dist);
+        valid_dist = -1;
+    }
+
+    return valid_dist;
 }
 
 int do_clean(void *arg)
@@ -180,168 +246,463 @@ int do_clean(void *arg)
     uint32_t normal_speed = 100;
 
     clear_emergency_stop();
-    clear_all_motor_queues();
     spin_mt_always_on = false;
+
+    clean_running_flag = true;
+    clean_pause_flag = false;
+    clean_resume_recovery_requested = false;
 
     send_led_cmd_msg(&led_msg, LED_CLEANING_CMD);
     set_tof_sensor_enable(true);
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
     
     send_plate_msg(&msg, PLATE_CMD, 0, FORWARD, 0);
     
-#ifdef FEATURE_MAIN_COVER   
-    // 01단계: MAIN_COVER 열기 (강파워 300ms Kick-Start 및 소프트 가속 적용)
+    ESP_LOGI(TAG, "[CLEAN Step 01] Opening MAIN_COVER...");
     drive_main_cover_soft(FORWARD, 100);
-    vTaskDelay(pdMS_TO_TICKS(150));
+    vTaskDelay(pdMS_TO_TICKS(300));
 
-    if (wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 20000, MT_OPEN) != 0)
+    int wait_cov_ret = wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 20000, MT_OPEN);
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    if (wait_cov_ret != 0)
     {
-        printf("\r\n\033[1;33m[ERROR] MAIN_COVER Open Timeout (20s)!\033[0m\r\n");
+        ESP_LOGE(TAG, "[ERROR] MAIN_COVER Open Timeout (20s)!");
         goto estop_exit;
     }
-
-    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-    vTaskDelay(pdMS_TO_TICKS(50));
 
     if (pt_check(DC_MOTOR, MAIN_COVER_MOTOR) != 1)
     {
-        printf("\r\n\033[1;33m[ERROR] MAIN_COVER Sensor State Error!\033[0m\r\n");
+        ESP_LOGE(TAG, "[ERROR] MAIN_COVER Open Limit Sensor NOT Detected!");
         goto estop_exit;
     }
-#endif
+
+    ESP_LOGI(TAG, "[CLEAN Step 01] MAIN_COVER Opened Successfully.");
 
     spin_mt_always_on = true;
 
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 220, FORWARD, first_spin_speed, 5000, false);
-    if (wait_duration(5000) != 0) goto estop_exit;
-    CHECK_ESTOP(); 
-    
-    // 02단계: 스쿱 OUT
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 15000);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_OPEN) != 0) goto estop_exit;
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
-    CHECK_ESTOP(); 
+    for (int cycle = 1; cycle <= 2; cycle++)
+    {
+        ESP_LOGI(TAG, "=================================================");
+        ESP_LOGI(TAG, "[CLEAN] Starting Clean Cycle %d/2...", cycle);
+        ESP_LOGI(TAG, "=================================================");
 
-    if (wait_duration(90 * 1000) != 0) goto estop_exit;
-    CHECK_ESTOP();
-    
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 80, REVERSE, normal_speed, 10000, false);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
-    vTaskDelay(pdMS_TO_TICKS(150));
+        if (cycle == 1) {
+            send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 220, FORWARD, first_spin_speed, 5000, false);
+        }
+        
+        if (wait_duration(5000) != 0) goto estop_exit;
+        CHECK_ESTOP(); 
+        
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 15000);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_OPEN) != 0) goto estop_exit;
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+        CHECK_ESTOP(); 
+
+        if (wait_duration(90 * 1000) != 0) goto estop_exit;
+        CHECK_ESTOP();
+        
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 80, REVERSE, normal_speed, 10000, false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto estop_exit;
+        
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 15000);
+        vTaskDelay(pdMS_TO_TICKS(300));
 
 #ifdef FEATURE_SHAKE_SCOOP
-    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000, MT_MIDDLE) != 0) goto estop_exit;
+        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000, MT_MIDDLE) != 0) goto estop_exit;
 
-    for (int i = 0; i < 4; i++)
-    {
-        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 30, REVERSE, normal_speed, 1000, false);
-        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 2000, MT_MIDDLE) != 0) goto estop_exit;
+        for (int i = 0; i < 4; i++)
+        {
+            send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 30, REVERSE, normal_speed, 1000, false);
+            if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 2000, MT_MIDDLE) != 0) goto estop_exit;
 
-        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 30, FORWARD, normal_speed, 1000, false);
-        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 2000, MT_MIDDLE) != 0) goto estop_exit;
+            send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 30, FORWARD, normal_speed, 1000, false);
+            if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 2000, MT_MIDDLE) != 0) goto estop_exit;
 
-        CHECK_ESTOP();
-    }
+            CHECK_ESTOP();
+        }
 #endif
-    
-    if (wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_OPEN) != 0)
-    {
-        printf("\r\n\033[1;33m[ERROR] WASTE_COVER Open Timeout!\033[0m\r\n");
-        goto estop_exit;
+        
+        if (wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_OPEN) != 0)
+        {
+            ESP_LOGE(TAG, "[ERROR] WASTE_COVER Open Timeout!");
+            goto estop_exit;
+        }
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        CHECK_TOF_PAUSE(estop_exit);
+
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000, MT_CLOSE) != 0) goto estop_exit;
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 160, REVERSE, normal_speed, 10000, false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto estop_exit;
+
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 70, FORWARD, normal_speed, 5000, false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000, MT_MIDDLE) != 0) goto estop_exit;
+
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 15000);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_OPEN) != 0) goto estop_exit;
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+
+        if (pt_check(DC_MOTOR, SCPINOUT_MOTOR) != 1)
+        {
+            ESP_LOGW(TAG, "[SAFETY] Scoop OUT position not detected! Retrying Scoop OUT...");
+            send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 15000);
+            vTaskDelay(pdMS_TO_TICKS(150));
+            if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_OPEN) != 0) goto estop_exit;
+            send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+        }
+
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+        vTaskDelay(pdMS_TO_TICKS(150));
+
+        if (cycle == 1)
+        {
+            ESP_LOGI(TAG, "[CLEAN] Triggering Step 14 (SCP_SPIN 170 deg) IMMEDIATELY with Waste Cover Close...");
+            send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 170, FORWARD, first_spin_speed, 5000, false);
+        }
+
+        bool waste_close_success = false;
+        for (int retry = 0; retry < 3; retry++)
+        {
+            if (retry > 0) {
+                ESP_LOGW(TAG, "[SAFETY] WASTE_COVER Close failed! Retrying... (%d/3)", retry + 1);
+                send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, FORWARD, 3000);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+                vTaskDelay(pdMS_TO_TICKS(150));
+            }
+
+            if (wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_CLOSE) == 0)
+            {
+                send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+                vTaskDelay(pdMS_TO_TICKS(150));
+
+                if (pt_check(STEP_MOTOR, WASTE_COVER_MOTOR) == -1)
+                {
+                    waste_close_success = true;
+                    break;
+                }
+            }
+        }
+
+        if (!waste_close_success)
+        {
+            ESP_LOGE(TAG, "[ERROR] WASTE_COVER Close Sensor Error after Retries!");
+            goto estop_exit;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
-    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
 
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000, MT_CLOSE) != 0) goto estop_exit;
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
-
-    // 09단계 쓰레기 배출 후 복귀 회전: 160도 REVERSE
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 130 + 30, REVERSE, normal_speed, 10000, false);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto estop_exit;
-
-    // 10단계 정회전 보정: 40도 FORWARD
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 40, FORWARD, normal_speed, 1000, false);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 5000, MT_MIDDLE) != 0) goto estop_exit;
-
-    // 11단계: 스쿱 OUT
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 15000);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_OPEN) != 0) goto estop_exit;
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
-
-    // 12단계: 쓰레기통 커버 닫기
-    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
-
-    // 13-1단계: M_PLATE 역방향 구동
-    send_plate_msg(&msg, PLATE_CMD, 0, REVERSE, 0);
-
-    // 13-2단계: 스쿱 모래 고르기 회전 (180도 FORWARD) - 타임아웃 25초
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 180, FORWARD, normal_speed, 5000, false);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 25000, MT_MIDDLE) != 0) goto estop_exit;
-
-    if (wait_duration(60 * 1000) != 0) goto estop_exit;
-    CHECK_ESTOP();
-
-    // 14단계: 모래 정리 역회전 (230도 REVERSE = 180 + 50) - 타임아웃 25초
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 180 + 50, REVERSE, normal_speed, 5000, false);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 25000, MT_MIDDLE) != 0) goto estop_exit;
-
-    // 15단계: 위치 복귀 (80도 FORWARD)
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 80, FORWARD, normal_speed, 3000, false);
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 50, FORWARD, normal_speed, 8000, false);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 8000, MT_MIDDLE) != 0) goto estop_exit;
 
     spin_mt_always_on = false;
 
-    // 16단계: 스쿱 IN 회수 - 타임아웃 25초
+    CHECK_TOF_PAUSE(estop_exit);
+
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 25000);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 25000, MT_CLOSE) != 0) goto estop_exit;
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
 
-    // 17단계: 최종 원점 복귀 회전 (50도 REVERSE로 수정 적용)
-    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 50, REVERSE, normal_speed, 5000, false);
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, REVERSE, normal_speed, 8000, false);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 8000, MT_MIDDLE) != 0) goto estop_exit;
 
-#ifdef FEATURE_MAIN_COVER
-    // 18단계: MAIN_COVER 닫기 (강파워 소프트 가속 적용)
+    ESP_LOGI(TAG, "[CLEAN Step 20-1] Performing Motor Calibration...");
+    if (motor_calibration() != 0)
+    {
+        ESP_LOGE(TAG, "[ERROR] Motor Calibration Failed after Step 20!");
+        goto estop_exit;
+    }
+    ESP_LOGI(TAG, "[CLEAN Step 20-1] Motor Calibration Completed Successfully.");
+
     drive_main_cover_soft(REVERSE, 100);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_CLOSE) != 0) goto estop_exit;
     send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-#endif
 
     send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
     set_tof_sensor_enable(false);
+    
+    clean_running_flag = false;
+    clean_pause_flag = false;
+    clean_resume_recovery_requested = false;
     send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
     return 0;
 
 estop_exit:    
-    printf("\r\n\033[1;33m[EMERGENCY] Emergency Stop Triggered! Cleaning process aborted.\033[0m\r\n");
+    ESP_LOGW(TAG, "[EMERGENCY] Emergency Stop Triggered or PAUSE Exit requested!");
 
     spin_mt_always_on = false;    
-    set_tof_sensor_enable(false);    
+    bool is_recovery_mode = clean_resume_recovery_requested;
+    clean_running_flag = false;
+    clean_pause_flag = false;
+    clean_resume_recovery_requested = false;
 
-    clear_all_motor_queues();
-
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
     send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
-#ifdef FEATURE_MAIN_COVER
     send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-#endif
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
     send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
     send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
 
+    if (is_recovery_mode)
+    {
+        return do_clean_resume_recovery();
+    }
+
     send_led_cmd_msg(&led_msg, LED_ERROR_CMD); 
+    return -1;
+}
+
+// 기존 로그 포맷대로 정돈된 오리진 복구 시나리오
+int do_clean_resume_recovery(void)
+{
+    mt_message_t msg = {0};
+    message_t led_msg = {0};
+    
+    ESP_LOGI(TAG, "=================================================");
+    ESP_LOGI(TAG, "[RECOVERY] Starting Origin (Resume Recovery Scenario)...");
+    ESP_LOGI(TAG, "=================================================");
+
+    clean_pause_flag = false;
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    int pt = get_pt_status();
+    bool is_waste_closed = ((pt & PT_BIT_WASTE_CLOSE) != 0);
+
+    if (!is_waste_closed)
+    {
+        ESP_LOGI(TAG, "[RECOVERY] Step 1: Closing WASTE_COVER FIRST & Waiting Complete...");
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, REVERSE, 15000);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        
+        if (wait_motor_operation(STEP_MOTOR, WASTE_COVER_MOTOR, 15000, MT_CLOSE) != 0) goto recovery_abort;
+        send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
+    ESP_LOGI(TAG, "[RECOVERY] Step 2: Performing SCOOP_SPIN Calibration...");
+    if (motor_calibration_recovery() != 0) goto recovery_abort;
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    pt = get_pt_status();
+    bool is_scp_in = ((pt & PT_BIT_SCP_IN) != 0);
+
+    if (!is_scp_in)
+    {
+        ESP_LOGI(TAG, "[RECOVERY] Step 3: Executing SCP_INOUT IN...");
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 15000);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_CLOSE) != 0) goto recovery_abort;
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
+    pt = get_pt_status();
+    bool is_mcover_open = ((pt & PT_BIT_MCOVER_OPEN) != 0);
+
+    if (is_mcover_open)
+    {
+        ESP_LOGI(TAG, "[RECOVERY] Step 4: MAIN_COVER is OPEN. Executing MAIN_COVER CLOSE...");
+        drive_main_cover_soft(REVERSE, 100);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        if (wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_CLOSE) != 0) goto recovery_abort;
+        send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+
+    ESP_LOGI(TAG, "[RECOVERY] Step 5: Resetting System to Complete IDLE State...");
+    
+    clean_running_flag = false;
+    clean_pause_flag = false;
+    clean_resume_recovery_requested = false;
+    emergency_stop_flag = false;
+
+    set_tof_sensor_enable(false);
+
+    send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+
+    send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
+    return 0;
+
+recovery_abort:
+    clean_running_flag = false;
+    clean_pause_flag = false;
+    clean_resume_recovery_requested = false;
+
+    send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
+    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    set_tof_sensor_enable(false);
+    send_led_cmd_msg(&led_msg, LED_ERROR_CMD);
+    return -1;
+}
+
+static int scp_spin_find_st_origin(int search_dir)
+{
+    mt_message_t msg = {0};
+    uint32_t fwd_dir = FORWARD;
+    uint32_t rev_dir = REVERSE;
+    uint32_t search_target_dir = (search_dir == 1) ? FORWARD : REVERSE;
+
+    if (emergency_stop_flag) return -1;
+
+    int current_pt = get_pt_status();
+    bool on_st_sensor = ((current_pt & PT_BIT_SCP_SPIN_ST) != 0);
+
+    if (on_st_sensor) {
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 360, rev_dir, 100, 30000, false);
+        
+        int64_t st_time = esp_timer_get_time();
+        while (((esp_timer_get_time() - st_time) / 1000) < 30000) {
+            if (emergency_stop_flag) {
+                send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+                return -1;
+            }
+            if ((get_pt_status() & PT_BIT_SCP_SPIN_ST) == 0) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if (emergency_stop_flag) return -1;
+
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 360, fwd_dir, 100, 30000, false);
+        st_time = esp_timer_get_time();
+        while (((esp_timer_get_time() - st_time) / 1000) < 30000) {
+            if (emergency_stop_flag) {
+                send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+                return -1;
+            }
+            if ((get_pt_status() & PT_BIT_SCP_SPIN_ST) != 0) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    } 
+    else {
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 360, search_target_dir, 100, 30000, false);
+
+        int64_t st_time = esp_timer_get_time();
+        while (((esp_timer_get_time() - st_time) / 1000) < 30000) {
+            if (emergency_stop_flag) {
+                send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+                return -1;
+            }
+            if ((get_pt_status() & PT_BIT_SCP_SPIN_ST) != 0) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if (emergency_stop_flag) return -1;
+
+        return scp_spin_find_st_origin(search_dir);
+    }
+
+    return 0;
+}
+
+int motor_calibration(void)
+{
+    mt_message_t msg = {0};
+    clear_emergency_stop();
+
+    int pt = get_pt_status();
+
+    bool is_scp_in = ((pt & PT_BIT_SCP_IN) != 0);
+
+    if (is_scp_in) {
+        if (scp_spin_find_st_origin(1) != 0) goto calib_abort;
+    } 
+    else {
+        if (scp_spin_find_st_origin(-1) != 0) goto calib_abort;
+        if (emergency_stop_flag) goto calib_abort;
+
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 90, FORWARD, 100, 10000, false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto calib_abort;
+        if (emergency_stop_flag) goto calib_abort;
+
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 15000);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_CLOSE) != 0) goto calib_abort;
+        send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+        if (emergency_stop_flag) goto calib_abort;
+
+        if (scp_spin_find_st_origin(-1) != 0) goto calib_abort;
+    }
+
+    if (emergency_stop_flag) goto calib_abort;
+
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 70, REVERSE, 100, 10000, false);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto calib_abort;
+    if (emergency_stop_flag) goto calib_abort;
+
+    return 0;
+
+calib_abort:
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+    return -1;
+}
+
+int motor_calibration_recovery(void)
+{
+    mt_message_t msg = {0};
+    clear_emergency_stop();
+
+    if (scp_spin_find_st_origin(-1) != 0) goto calib_rec_abort;
+    if (emergency_stop_flag) goto calib_rec_abort;
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 75, FORWARD, 100, 10000, false);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto calib_rec_abort;
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    if (emergency_stop_flag) goto calib_rec_abort;
+
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 15000);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 15000, MT_CLOSE) != 0) goto calib_rec_abort;
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
+    vTaskDelay(pdMS_TO_TICKS(300));
+    if (emergency_stop_flag) goto calib_rec_abort;
+
+    if (scp_spin_find_st_origin(-1) != 0) goto calib_rec_abort;
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 70, REVERSE, 100, 10000, false);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    if (wait_motor_operation(STEP_MOTOR, SCPSPIN_MOTOR, 10000, MT_MIDDLE) != 0) goto calib_rec_abort;
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    return 0;
+
+calib_rec_abort:
+    send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
     return -1;
 }
 
@@ -354,14 +715,11 @@ int do_manage_start(void *arg)
 
     send_led_cmd_msg(&led_msg, LED_MANAGE_CMD);
     set_tof_sensor_enable(true);
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
 
-#ifdef FEATURE_MAIN_COVER   
     drive_main_cover_soft(FORWARD, 100);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_OPEN) != 0) goto manage_start_exit;
     send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-#endif
 
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, FORWARD, 10000);
     vTaskDelay(pdMS_TO_TICKS(150));
@@ -384,19 +742,17 @@ int do_manage_finish(void *arg)
     led_msg.task_id = (uint32_t)arg;
 
     set_tof_sensor_enable(true);
-    send_motor_msg(&msg, EMERGENCY_RESET_CMD, 0, 0, 0);
     
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, REVERSE, 10000);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(DC_MOTOR, SCPINOUT_MOTOR, 10000, MT_CLOSE) != 0) goto manage_finish_exit;
     send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
 
-#ifdef FEATURE_MAIN_COVER   
     drive_main_cover_soft(REVERSE, 100);
     vTaskDelay(pdMS_TO_TICKS(150));
     if (wait_motor_operation(DC_MOTOR, MAIN_COVER_MOTOR, 10000, MT_CLOSE) != 0) goto manage_finish_exit;
     send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-#endif
+
     set_tof_sensor_enable(false);
     send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
     return 0;
@@ -406,61 +762,15 @@ manage_finish_exit:
     return -1;
 }
 
-void send_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout)
+int motor_scpspin_test(int dir)
 {
-    if (motor_msg == NULL) return;
-    
-    mt_message_t *msg = (mt_message_t *)message;
-    msg->cmd = cmd;
-    msg->angle = angle;
-    msg->direction = dir;
-    msg->timeout = timeout;
-    xQueueSend(motor_msg, msg, pdMS_TO_TICKS(100));
-}
-
-void motor_cmd_task(void *arg) {
-    while (1) {
-        mt_message_t msg = {0};
-        if (xQueueReceive(motor_msg, &msg, portMAX_DELAY) == pdPASS) {
-            switch((int)(msg.cmd))
-            {
-                case EMERGENCY_RESET_CMD:
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-    vTaskDelete(NULL);
+    mt_message_t msg = {0};
+    send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 360, (dir == 1) ? FORWARD : REVERSE, 15000);
+    return 0;
 }
 
 void motor_init(void)
 {
-    motor_msg = xQueueCreate(10, sizeof(mt_message_t));
-    xTaskCreate(motor_cmd_task, "motor_cmd_task", 4096, NULL, 5, NULL);
-
-    // 부팅 완료 후 LED 대기(IDLE) 신호 전송
     message_t led_msg = {0};
     send_led_cmd_msg(&led_msg, LED_IDLE_CMD);
-}
-
-void set_emergency_stop(void)
-{
-    emergency_stop_flag = true;
-    mt_message_t msg = {0};
-    
-    clear_all_motor_queues();
-
-    send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
-    send_scpinout_msg(&msg, SCP_INOUT_CMD, 0, STOP, 0);
-#ifdef FEATURE_MAIN_COVER
-    send_main_motor_msg(&msg, MAIN_COVER_CMD, 0, STOP, 0);
-#endif
-    send_waste_motor_msg(&msg, WASTE_COVER_CMD, 0, STOP, 0);
-    send_scpspin_motor_msg(&msg, SCP_SPIN_CMD, 0, STOP, 0);
-}
-
-void clear_emergency_stop(void)
-{
-    emergency_stop_flag = false;
 }

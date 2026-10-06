@@ -113,40 +113,6 @@ void Wifi_Connect(const char* target_ssid, const char* target_password)
     }
 
 }
-/*
-void wifi_init_sta_static_ip(char* WIFI_SSID, char* WIFI_PASS)
-{
-    // 1. 기본 네트워크 인터페이스 초기화
- //   esp_netif_init();
-    esp_event_loop_create_default();
-    esp_netif_t *netif = esp_netif_create_default_wifi_sta();
-
-    // 2. DHCP 클라이언트 중지
-    esp_netif_dhcpc_stop(netif);
-
-    // 3. 고정 IP 설정
-    esp_netif_ip_info_t ip_info;
-    ip_info.ip.addr = ipaddr_addr("192.168.0.61");
-    ip_info.gw.addr = ipaddr_addr("192.168.0.1");
-    ip_info.netmask.addr = ipaddr_addr("255.255.255.0");
-
-    esp_netif_set_ip_info(netif, &ip_info);
-
-    // 4. Wi-Fi 초기화 및 시작
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-
-    wifi_config_t wifi_config ;
-    memcpy(wifi_config.sta.ssid,WIFI_SSID,sizeof(wifi_config.sta.ssid));
-    memcpy(wifi_config.sta.password,WIFI_PASS,sizeof(wifi_config.sta.password));
-//
-    esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config);
-    esp_wifi_start();
-    esp_wifi_connect();
-
-    ESP_LOGI(TAG, "Wi-Fi STA static IP setup done");
-}*/
 
 wifi_ap_record_t* ap_list = NULL;
 uint16_t total_found_count = 0; // 중복 제거 후 최종적으로 모은 AP 개수
@@ -296,8 +262,6 @@ uint16_t wifi_scan_start(void)
     return total_found_count;
 }
 
-
-
 // [단계 2] NTP 서버로부터 시간이 실제로 동기화되었을 때 호출되는 콜백 함수
 void time_sync_notification_cb(struct timeval *tv) {
     ESP_LOGI(TAG, "NTP 시간 동기화 완료!");
@@ -332,6 +296,7 @@ void sntp_init_and_sync(void) {
     
     esp_sntp_init();
 }
+
 // 백그라운드 이벤트 핸들러
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data)
@@ -365,6 +330,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         sntp_init_and_sync();
     }
 }
+
 void wifi_init(void)
 {
     s_wifi_event_group = xEventGroupCreate();
@@ -391,6 +357,16 @@ void wifi_init(void)
     app_wifi_config_t* wifi_config = get_wifi_config();
     if ((wifi_config->conn_ssid[0] != '\0') &&  (wifi_config->conn_password[0] != '\0'))
         Wifi_Connect((char*)wifi_config->conn_ssid,(const char*)wifi_config->conn_password);
+}
 
-
+/**
+ * @brief 동적 할당된 Wi-Fi AP 스캔 버퍼를 안전하게 해제합니다.
+ */
+void wifi_list_clear(void)
+{
+    if (ap_list != NULL) {
+        free(ap_list);
+        ap_list = NULL;
+        ESP_LOGI(TAG, "Wi-Fi 스캔 결과 버퍼 해제 완료");
+    }
 }

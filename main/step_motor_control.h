@@ -37,9 +37,11 @@ void send_scpspin_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_
 void send_scpspin_motor_msg_ex(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t speed, uint32_t timeout, bool cal);
 void step_motor_init(void);
 
+// 🌟 [추가]: 스텝 모터 메시지 큐 Flush 전용 함수
+void step_motor_flush_queues(void);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* __STEP_MOTOR_CONTROL_H__ */
-

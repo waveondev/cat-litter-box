@@ -2,7 +2,6 @@
 
 static const char *TAG = "APP_MAIN";
 
-// 핀 설정 (ESP32-S3 하드웨어에 맞게 핀맵 변경)
 #define UART1_TXD_PIN (GPIO_NUM_17)
 #define UART1_RXD_PIN (GPIO_NUM_18)
 
@@ -24,17 +23,19 @@ static const char *TAG = "APP_MAIN";
 #define P_FUNCTION      "p"
 #define Q_FUNCTION      "q"
 #define R_FUNCTION      "r"
-#define S_FUNCTION      "s"
-#define T_FUNCTION      "t" // 기구물 미장착 캘리브레이션
-#define U_FUNCTION      "u" // 링 구조 장착 캘리브레이션
-#define V_FUNCTION      "v" // 상단 판 장착 캘리브레이션
-#define Z_FUNCTION      "z" // E-Stop
+#define S_FUNCTION      "s" // Motor Calibration
+#define T_FUNCTION      "t"
+#define U_FUNCTION      "u"
+#define V_FUNCTION      "v"
+#define W_FUNCTION      "w" // Origin (Resume Recovery Scenario)
+#define X_FUNCTION      "x"
+#define Y_FUNCTION      "y"
+#define Z_FUNCTION      "z"
 
 #define RX_BUF_SIZE         (256)
 #define PARSE_BUF_SIZE      (128)
 #define UART_MAX_TIMEOUT    (10)
 
-// ring buffer
 typedef struct {
     unsigned char buffer[RX_BUF_SIZE];
     unsigned short head;
@@ -48,9 +49,27 @@ unsigned short parse_idx = 0;
 
 static unsigned int reset_reason = 0;
 
-// 긴급 정지 관련 함수 원형 (motor.c에 구현됨)
-extern void set_emergency_stop(void);
-extern void clear_emergency_stop(void);
+#ifdef __cplusplus
+extern "C" {
+#endif
+void set_emergency_stop(void);
+void clear_emergency_stop(void);
+int motor_scpspin_test(int dir);
+
+void step_motor_flush_queues(void);
+
+// 🌟 [핵심 방어]: dc_motor_control.c 내 구현체 유무와 상관없이 링커 에러를 100% 방지하는 Weak 심볼
+__attribute__((weak)) void dc_motor_flush_queues(void) {}
+#ifdef __cplusplus
+}
+#endif
+
+static void flush_all_system_queues(void)
+{
+    dc_motor_flush_queues();
+    step_motor_flush_queues();
+    ESP_LOGI(TAG, "[BOOT INIT] All FreeRTOS Message Queues Flushed Successfully.");
+}
 
 void RingBuffer_Push(unsigned char data) {
     unsigned short next = (rx_ring.head + 1) % RX_BUF_SIZE;
@@ -94,6 +113,9 @@ static void Usage(void)
     ESP_LOGI(TAG, "T : LOADCELL State 1 (No parts) Save");
     ESP_LOGI(TAG, "U : LOADCELL State 2 (Ring) Save");
     ESP_LOGI(TAG, "V : LOADCELL State 3 (Plate) Save");
+    ESP_LOGI(TAG, "W : Origin (Resume Recovery Scenario)");
+    ESP_LOGI(TAG, "X : SCP_SPIN FORWARD Sensor Test");
+    ESP_LOGI(TAG, "Y : Print All Photo Sensor Status");
     ESP_LOGI(TAG, "Z : Emergency Stop");
     ESP_LOGI(TAG, "Enter : ");
 }
@@ -114,10 +136,72 @@ static void loadcell_tare_task(void *arg) {
     vTaskDelete(NULL);
 }
 
+static TaskHandle_t xScpSpinTestTaskHandle = NULL;
+
+static void scpspin_test_task(void *arg) {
+    int dir = (int)(intptr_t)arg;
+    motor_scpspin_test(dir);
+    xScpSpinTestTaskHandle = NULL;
+    vTaskDelete(NULL);
+}
+
+static void motor_calib_task(void *arg) {
+    motor_calibration();
+    vTaskDelete(NULL);
+}
+
+static void recovery_scenario_task(void *arg) {
+    ESP_LOGI(TAG, "[CMD W] Triggering 5-Step Origin (Resume Recovery Scenario)...");
+    do_clean_resume_recovery();
+    vTaskDelete(NULL);
+}
+
+void check_boot_origin_recovery(void)
+{
+    int pt = get_pt_status();
+    
+    bool is_waste_closed  = ((pt & PT_BIT_WASTE_CLOSE) != 0);
+    bool is_mcover_closed = ((pt & PT_BIT_MCOVER_CLOSE) != 0);
+    bool is_scp_in        = ((pt & PT_BIT_SCP_IN) != 0);
+
+    ESP_LOGI(TAG, "[BOOT CHECK] Sensor Status - WASTE_CLOSED: %d, MCOVER_CLOSED: %d, SCP_IN: %d", 
+             is_waste_closed, is_mcover_closed, is_scp_in);
+
+    if (!is_waste_closed || !is_mcover_closed || !is_scp_in)
+    {
+        ESP_LOGW(TAG, "=================================================");
+        ESP_LOGW(TAG, "[BOOT RECOVERY] Unaligned mechanical position detected!");
+        ESP_LOGW(TAG, "  --> Triggering do_clean_resume_recovery() directly...");
+        ESP_LOGW(TAG, "=================================================");
+
+        clear_emergency_stop();
+        do_clean_resume_recovery();
+    }
+    else
+    {
+        ESP_LOGI(TAG, "[BOOT CHECK] Mechanical Position Normal (All in Origin). Waiting for Weight Baseline...");
+    }
+}
+
 static void Process_Command(message_t *mtmsg, char *cmd) 
 {
     mt_message_t msg = {0};
     msg.task_id = mtmsg->task_id;
+
+    ESP_LOGI(TAG, "Process_Command Received -> '%s'", cmd);
+
+    if (strncmp(cmd, (char *)Z_FUNCTION, strlen((char *)Z_FUNCTION)) != 0 && 
+        strncmp(cmd, "Z", 1) != 0 && strncmp(cmd, "z", 1) != 0) {
+        clear_emergency_stop();
+    }
+
+    if (strncmp(cmd, (char *)X_FUNCTION, strlen((char *)X_FUNCTION)) != 0 && 
+        strncmp(cmd, "X", 1) != 0 && strncmp(cmd, "x", 1) != 0) {
+        if (xScpSpinTestTaskHandle != NULL) {
+            vTaskDelete(xScpSpinTestTaskHandle);
+            xScpSpinTestTaskHandle = NULL;
+        }
+    }
 
     if (strncmp(cmd, (char *)A_FUNCTION, strlen((char *)A_FUNCTION)) == 0) {
         send_plate_msg(&msg, PLATE_CMD, 0, FORWARD, 0);
@@ -126,7 +210,8 @@ static void Process_Command(message_t *mtmsg, char *cmd)
     } else if (strncmp(cmd, (char *)C_FUNCTION, strlen((char *)C_FUNCTION)) == 0) {
         send_plate_msg(&msg, PLATE_CMD, 0, STOP, 0);
     }
-    else if (strncmp(cmd, (char *)D_FUNCTION, strlen((char *)D_FUNCTION)) == 0) {
+    else if (strncmp(cmd, (char *)D_FUNCTION, strlen((char *)D_FUNCTION)) == 0 ||
+             strncmp(cmd, "D", 1) == 0 || strncmp(cmd, "d", 1) == 0) {
         send_scpinout_msg(&msg, SCP_INOUT_CMD, 30, FORWARD, 10000);
     } else if (strncmp(cmd, (char *)E_FUNCTION, strlen((char *)E_FUNCTION)) == 0) {
         send_scpinout_msg(&msg, SCP_INOUT_CMD, 30, REVERSE, 10000);
@@ -161,7 +246,12 @@ static void Process_Command(message_t *mtmsg, char *cmd)
     else if (strncmp(cmd, (char *)Q_FUNCTION, strlen((char *)Q_FUNCTION)) == 0) {
         xTaskCreate(loadcell_tare_task, "loadcell_tare_task", 3072, NULL, 10, NULL);
     }
-    // [추가] 조립 상태별 캘리브레이션 (T, U, V)
+    else if (strncmp(cmd, (char *)S_FUNCTION, strlen((char *)S_FUNCTION)) == 0 ||
+             strncmp(cmd, "S", 1) == 0 || strncmp(cmd, "s", 1) == 0) {
+        
+        ESP_LOGI(TAG, "Command: S - Motor Calibration Start");
+        xTaskCreate(motor_calib_task, "motor_calib_task", 4096, NULL, 5, NULL);
+    }
     else if (strncmp(cmd, (char *)T_FUNCTION, strlen((char *)T_FUNCTION)) == 0) {
         ESP_LOGI(TAG, "Command: T - 기구물 미장착 상태 캘리브레이션 시작");
         message_t lmsg = {0};
@@ -175,14 +265,73 @@ static void Process_Command(message_t *mtmsg, char *cmd)
         message_t lmsg = {0};
         send_loadcell_msg(&lmsg, LOADCELL_SAVE_STATE3_CMD);
     }
-    else if (strncmp(cmd, (char *)R_FUNCTION, strlen((char *)R_FUNCTION)) == 0) {
-        //system_reset(REASON_TEST); // 단순 재부팅만 됨
-        system_reset(REASON_FACTORY_RESTORE); // 진짜 공장 초기화 실행
+    else if (strncmp(cmd, W_FUNCTION, strlen(W_FUNCTION)) == 0 ||
+             strncmp(cmd, "W", 1) == 0 || strncmp(cmd, "w", 1) == 0) {
+        
+        ESP_LOGI(TAG, "Command: W - Origin (Resume Recovery Scenario)");
+        clear_emergency_stop();
+        
+        if (is_clean_running()) {
+            toggle_clean_pause();
+        } else {
+            xTaskCreate(recovery_scenario_task, "recovery_task", 4096, NULL, 5, NULL);
+        }
     }
-    // [추가] 긴급 정지
-    else if (strncmp(cmd, (char *)Z_FUNCTION, strlen((char *)Z_FUNCTION)) == 0) {
-        ESP_LOGI(TAG, "%s : EMERGENCY STOP !!", (char *)Z_FUNCTION);
-        set_emergency_stop(); 
+    else if (strncmp(cmd, (char *)X_FUNCTION, strlen((char *)X_FUNCTION)) == 0 ||
+             strncmp(cmd, "X", 1) == 0 || strncmp(cmd, "x", 1) == 0) {
+        
+        if (xScpSpinTestTaskHandle != NULL) {
+            vTaskDelete(xScpSpinTestTaskHandle);
+            xScpSpinTestTaskHandle = NULL;
+        }
+
+        ESP_LOGI(TAG, "Command: X - SCP_SPIN Clockwise Sensor Test Start");
+        xTaskCreate(scpspin_test_task, "scpspin_test_task", 4096, (void*)(intptr_t)1, 3, &xScpSpinTestTaskHandle);
+    }
+    else if (strncmp(cmd, (char *)Y_FUNCTION, strlen((char *)Y_FUNCTION)) == 0 ||
+             strncmp(cmd, "Y", 1) == 0 || strncmp(cmd, "y", 1) == 0) {
+        
+        int current_pt = get_pt_status();
+
+        ESP_LOGI(TAG, "=================================================");
+        ESP_LOGI(TAG, "[CURRENT PHOTO SENSOR STATUS] RAW: 0x%04X (%d)", current_pt, current_pt);
+
+        struct {
+            int mask;
+            const char* name;
+        } sensor_list[] = {
+            { PT_BIT_SCP_SPIN_ST, "SCP_SPIN_ST (스쿱 회전 시작)" },
+            { PT_BIT_SCP_OUT,     "SCP_OUT     (스쿱 전진 끝)" },
+            { PT_BIT_WASTE_CLOSE, "WASTE_CLOSE (배변통 닫힘)" },
+            { PT_BIT_MCOVER_OPEN, "MCOVER_OPEN (메인커버 열림)" },
+            { PT_BIT_SCP_SPIN_ED, "SCP_SPIN_ED (스쿱 회전 끝)" },
+            { PT_BIT_SCP_IN,      "SCP_IN      (스쿱 후진 끝)" },
+            { PT_BIT_WASTE_OPEN,  "WASTE_OPEN  (배변통 열림)" },
+            { PT_BIT_REED_SW,     "REED_SW     (리드 스위치)" },
+            { PT_BIT_MCOVER_CLOSE,"MCOVER_CLOSE(메인커버 닫힘)" }
+        };
+
+        int list_size = sizeof(sensor_list) / sizeof(sensor_list[0]);
+        for (int i = 0; i < list_size; i++) {
+            bool is_active = (current_pt & sensor_list[i].mask) != 0;
+            ESP_LOGI(TAG, "  ├─ %-26s : %d (%s)", 
+                     sensor_list[i].name, 
+                     is_active ? 1 : 0, 
+                     is_active ? "DETECTED / HIGH" : "RELEASED / LOW");
+        }
+        ESP_LOGI(TAG, "=================================================");
+    }
+    else if (strncmp(cmd, (char *)R_FUNCTION, strlen((char *)R_FUNCTION)) == 0) {
+        system_reset(REASON_FACTORY_RESTORE);
+    }
+    else if (strncmp(cmd, (char *)Z_FUNCTION, strlen((char *)Z_FUNCTION)) == 0 ||
+             strncmp(cmd, "Z", 1) == 0 || strncmp(cmd, "z", 1) == 0) {
+        ESP_LOGI(TAG, "Command: Z - EMERGENCY STOP !!");
+        set_emergency_stop();
+        send_scpspin_motor_msg_ex(&msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    }
+    else {
+        Usage();
     }
 }
 
@@ -357,53 +506,52 @@ unsigned int get_boot_reason(void)
 
 void system_reset(int reason)
 {
-	message_t msg;
-	app_config_t *app = get_app_config();
-	app->reset_reason = reason;
+    message_t msg;
+    app_config_t *app = get_app_config();
+    app->reset_reason = reason;
 
-	if(reason == REASON_DIAG)
-	{
+    if(reason == REASON_DIAG)
+    {
         app_nvs_save_set();
         send_led_cmd_msg(&msg, LED_QCQUIT_CMD);
         vTaskDelay(pdMS_TO_TICKS(2000));
-	}
-	else if(reason == REASON_OTA)
-	{
+    }
+    else if(reason == REASON_OTA)
+    {
         app_nvs_save_set();
         vTaskDelay(5000 / portTICK_PERIOD_MS);
-	}
-	else if(reason == REASON_FACTORY_RESTORE)
-	{
-		app->MIN_VALID_WASTE_RAW = 50;   
-		app->CLUMPING_WAIT_MIN = 10; 
+    }
+    else if(reason == REASON_FACTORY_RESTORE)
+    {
+        app->MIN_VALID_WASTE_RAW = 50;   
+        app->CLUMPING_WAIT_MIN = 10; 
         
-        // 공장 초기화 시에도 기준 전압의 30% (약 495mA)로 설정
         app->m1_jam_current = 495;
         app->m2_jam_current = 495;
         app->m3_jam_current = 495;
         app->m4_jam_current = 495;
         app->m5_jam_current = 495;
             
-		app->CAT_ENTRY_MIN_WEIGHT = 500;
-		app->WASTE_TYPE_RATIO_TH = 20;   
-		app->EFFECTIVE_DWELL_TIME = 5;   
-		app->gate_way_rssi_th = -85;
-		app->tof_sense_threshold_l = 250;
-		app->tof_sense_threshold_r = 250;
-		app->motion_data_time = 1800;
-		app_nvs_save_set();
-		vTaskDelay(pdMS_TO_TICKS(2000));
-	}
-	else
-	{
+        app->CAT_ENTRY_MIN_WEIGHT = 500;
+        app->WASTE_TYPE_RATIO_TH = 20;   
+        app->EFFECTIVE_DWELL_TIME = 5;   
+        app->gate_way_rssi_th = -85;
+        app->tof_sense_threshold_l = 250;
+        app->tof_sense_threshold_r = 250;
+        app->motion_data_time = 1800;
         app_nvs_save_set();
-		vTaskDelay(pdMS_TO_TICKS(500)); 
-	}
-	esp_restart();
-	while(1)
-	{
-	    vTaskDelay(pdMS_TO_TICKS(500));
-	}
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+    else
+    {
+        app_nvs_save_set();
+        vTaskDelay(pdMS_TO_TICKS(500)); 
+    }
+    esp_restart();
+    while(1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
 }
 
 unsigned int get_freeheap_size(int line)
@@ -411,12 +559,13 @@ unsigned int get_freeheap_size(int line)
     return xPortGetFreeHeapSize();
 }
 
+volatile bool g_start_ota_flag = false;
+
 #ifdef FEATURE_AWS_IOT
 #include "nimble/nimble_port.h"
 #include "esp_bt.h"
 #define OTA_URL "https://evtago.s3.ap-northeast-2.amazonaws.com/loopoo.bin"
 extern void ota_main(const char* URL);
-volatile bool g_start_ota_flag = false;
 
 static esp_vfs_spiffs_conf_t spiffs_conf = {
   .base_path = "/spiffs",
@@ -456,6 +605,12 @@ void app_main(void) {
 
     vTaskDelay(pdMS_TO_TICKS(100));
     uart_bridge_init();
+
+    uart_flush_input(UART_NUM_0);
+    uart_flush_input(UART_NUM_1);
+    rx_ring.head = 0;
+    rx_ring.tail = 0;
+
     xTaskCreate(uart1_to_uart0_task, "u1_to_u0", 3072, NULL, 5, NULL);
     xTaskCreate(uart_process, "u0_to_u1", 3072, NULL, 10, NULL);
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -482,7 +637,18 @@ void app_main(void) {
     step_motor_init();
     motor_init();    
     current_monitor_init();
-    
+
+    flush_all_system_queues();
+
+    clear_emergency_stop();
+    mt_message_t init_mt_msg = {0};
+    send_plate_msg(&init_mt_msg, PLATE_CMD, 0, STOP, 0);
+    send_scpinout_msg(&init_mt_msg, SCP_INOUT_CMD, 0, STOP, 0);
+    send_main_motor_msg(&init_mt_msg, MAIN_COVER_CMD, 0, STOP, 0);
+    send_waste_motor_msg(&init_mt_msg, WASTE_COVER_CMD, 0, STOP, 0);
+    send_scpspin_motor_msg_ex(&init_mt_msg, SCP_SPIN_CMD, 0, STOP, 0, 0, false);
+    ESP_LOGI(TAG, "[BOOT INIT] All Motor Channels Forced STOP & Safety Cleared.");
+
     ui_init();
     keyscan_init();
 
@@ -514,12 +680,10 @@ void app_main(void) {
 
     while(1)
     {
-        float m_weight, w_weight;
-        w_weight = get_weight(LOADCELL_WASTE);
-        m_weight = get_weight(LOADCELL_MAIN);
+        float w_weight = get_weight(LOADCELL_WASTE);
+        float m_weight = get_weight(LOADCELL_MAIN);
         
-        // [주석 해제됨] 무게가 정상적으로 산출되는지 모니터링 (500ms 간격 출력)
-        ESP_LOGI(TAG, "main: %.1fg waste: %.1fg", m_weight, w_weight); 
+        ESP_LOGD(TAG, "[LOADCELL PERIODIC] Main: %.1fg, Waste: %.1fg", m_weight, w_weight);
         
         vTaskDelay(pdMS_TO_TICKS(5000));
 

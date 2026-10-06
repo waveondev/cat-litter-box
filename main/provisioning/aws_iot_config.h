@@ -49,6 +49,17 @@
     #define LIBRARY_LOG_LEVEL    LOG_INFO
 #endif
 
+/* 기존 매크로 중복 정의 방지를 위한 #undef 처리 */
+#ifdef LogError
+    #undef LogError
+#endif
+#ifdef LogWarn
+    #undef LogWarn
+#endif
+#ifdef LogInfo
+    #undef LogInfo
+#endif
+
 #include "logging_stack.h"
 
 /************ End of logging configuration ****************/
@@ -108,8 +119,6 @@
  * example_claim_policy.json file in the demo directory. In the example,
  * replace <aws-region> with your AWS region, <aws-account-id> with your
  * account ID, and <template-name> with the name of your provisioning template.
- *
- * 
  */
 #define CLAIM_CERT_PATH    "/spiffs/certs/claim_cert.crt"
 
@@ -122,8 +131,6 @@
  * https://docs.aws.amazon.com/iot/latest/developerguide/provision-wo-cert.html#claim-based
  *
  * @note This private key should be PEM-encoded.
- *
- * 
  */
 #define CLAIM_PRIVATE_KEY_PATH    "/spiffs/certs/claim_private.key"
 
@@ -151,7 +158,6 @@
  *
  * This is sent as a parameter to the provisioning template, which uses it to
  * generate a unique Thing name. This should be unique per device.
- *
  */
 #define DEVICE_SERIAL_NUMBER    CONFIG_DEVICE_SERIAL_NUMBER
 
@@ -179,7 +185,6 @@
 #ifndef CLIENT_IDENTIFIER
     #define CLIENT_IDENTIFIER    DEVICE_SERIAL_NUMBER 
 #endif
-
 
 /**
  * @brief The name of the operating system that the application is running on.
@@ -209,4 +214,4 @@
 #include "core_mqtt.h"
 #define MQTT_LIB    "core-mqtt@" MQTT_LIBRARY_VERSION
 
-#endif /* ifndef DEMO_CONFIG_H_ */
+#endif /* AWS_IOT_CONFIG_H_ */

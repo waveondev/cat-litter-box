@@ -1,9 +1,14 @@
 #include "main.h"
-
+#include <math.h>
 
 static const char *TAG = "UI";
 
 #define UI_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
+
+// 전역 변수 실체 정의
+volatile bool g_is_system_ready = false;
+
+extern void check_boot_origin_recovery(void);
 
 static bool pairing_task_run = false;
 static bool factory_task_run = false;
@@ -16,19 +21,13 @@ static bool manage_start_task_run = false;
 
 static QueueHandle_t ui_cmd_msg = NULL;
 
-
 void send_ui_cmd_msg(void *message, uint32_t cmd)
 {
 	message_t *msg = (message_t *)message;
     msg->cmd = cmd;
     BaseType_t status = xQueueSend(ui_cmd_msg, msg, pdMS_TO_TICKS(100));
-    if (status == pdPASS) 
+    if (status != pdPASS) 
     {
-//        ESP_LOGI(TAG, "[Sender %ld] transfer complete -> cmd %d ", msg->task_id, msg->cmd);
-    } 
-    else 
-    {
-//        ESP_LOGW(TAG, "[Sender %ld] queue full transfer failed", msg->task_id);
     }
 }
 
@@ -51,6 +50,7 @@ void ui_manage_finish_task(void *arg)
 	manage_finish_task_run = false;
 	vTaskDelete(NULL);
 }
+
 void ui_manage_start_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
@@ -59,6 +59,7 @@ void ui_manage_start_task(void *arg)
 	manage_start_task_run = false;
 	vTaskDelete(NULL);
 }
+
 void ui_tarezero_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
@@ -68,6 +69,7 @@ void ui_tarezero_task(void *arg)
 	tare_task_run = false;
 	vTaskDelete(NULL);
 }
+
 void ui_pairing_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
@@ -85,6 +87,7 @@ void ui_pairing_task(void *arg)
 	pairing_task_run = false;
 	vTaskDelete(NULL);
 }
+
 void ui_factory_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
@@ -95,7 +98,6 @@ void ui_factory_task(void *arg)
     
     send_led_cmd_msg(&led_msg, LED_INITOK_CMD);
 
-	// nv init
     ESP_ERROR_CHECK(nvs_flash_erase());
     nvs_flash_init();
 
@@ -107,7 +109,6 @@ void ui_factory_task(void *arg)
 
 static bool check_run_flag(bool manage)
 {
-
 	if(!clean_task_run 
 			&& !pairing_task_run 
 			&& !factory_task_run 
@@ -117,25 +118,13 @@ static bool check_run_flag(bool manage)
 	{
 		if(manage)
 		{
-			if(ui_manage_f)
-			{
-				return true;		
-			}
-			else
-			{
-				return false;
-			}
+			if(ui_manage_f) return true;		
+			else return false;
 		}
 		else
 		{
-			if(!ui_manage_f)
-			{
-				return true;
-			}
-			else
-			{
-				return false;
-			}
+			if(!ui_manage_f) return true;
+			else return false;
 		}
 	}
 	return false;
@@ -147,28 +136,22 @@ bool check_task_runnable(int task)
 	switch(task)
 	{
         case UI_CLEAN_CMD:
-        	if(check_run_flag(false))
-        		return true;
+        	if(check_run_flag(false)) return true;
         	break;
         case UI_MANAGE_FINISH_CMD:
-        	if(check_run_flag(true))
-        		return true;
+        	if(check_run_flag(true)) return true;
         	break;
         case UI_TARE_ZERO_CMD:
-        	if(check_run_flag(false))
-        		return true;
+        	if(check_run_flag(false)) return true;
         	break;
         case UI_MANAGE_START_CMD:
-        	if(check_run_flag(false))
-        		return true;
+        	if(check_run_flag(false)) return true;
         	break;
         case UI_PAIRING_CMD:
-        	if(check_run_flag(false))
-        		return true;
+        	if(check_run_flag(false)) return true;
         	break;
         case UI_FACTORY_CMD:
-        	if(check_run_flag(false))
-        		return true;
+        	if(check_run_flag(false)) return true;
         	break;
         default:
         	break;
@@ -185,7 +168,6 @@ void ui_task(void *arg)
         message_t msg;
         if (xQueueReceive(ui_cmd_msg, &msg, portMAX_DELAY) == pdPASS) 
         {
-//          ESP_LOGI(TAG, "[Receiver %ld] transfer complete -> cmd %d ", msg.task_id, msg.cmd);
 	        switch((int)(msg.cmd))
 	        {
 				case UI_CLEAN_CMD:
@@ -262,6 +244,42 @@ static bool check_operating(void)
 	return false;
 }
 
+static void print_boot_photo_sensor_status(void)
+{
+    int current_pt = get_pt_status();
+
+    ESP_LOGI(TAG, "=================================================");
+    ESP_LOGI(TAG, "[BOOT PHOTO SENSOR STATUS] RAW: 0x%04X (%d)", current_pt, current_pt);
+
+    struct {
+        int mask;
+        const char* name;
+    } sensor_list[] = {
+        { PT_BIT_SCP_SPIN_ST, "SCP_SPIN_ST (스쿱 회전 시작)" },
+        { PT_BIT_SCP_OUT,     "SCP_OUT     (스쿱 전진 끝)" },
+        { PT_BIT_WASTE_CLOSE, "WASTE_CLOSE (배변통 닫힘)" },
+        { PT_BIT_MCOVER_OPEN, "MCOVER_OPEN (메인커버 열림)" },
+        { PT_BIT_SCP_SPIN_ED, "SCP_SPIN_ED (스쿱 회전 끝)" },
+        { PT_BIT_SCP_IN,      "SCP_IN      (스쿱 후진 끝)" },
+        { PT_BIT_WASTE_OPEN,  "WASTE_OPEN  (배변통 열림)" },
+        { PT_BIT_REED_SW,     "REED_SW     (리드 스위치)" },
+        { PT_BIT_MCOVER_CLOSE,"MCOVER_CLOSE(메인커버 닫힘)" }
+    };
+
+    int list_size = sizeof(sensor_list) / sizeof(sensor_list[0]);
+    for (int i = 0; i < list_size; i++) {
+        bool is_active = (current_pt & sensor_list[i].mask) != 0;
+        ESP_LOGI(TAG, "  ├─ %-26s : %d (%s)", 
+                 sensor_list[i].name, 
+                 is_active ? 1 : 0, 
+                 is_active ? "DETECTED / HIGH" : "RELEASED / LOW");
+    }
+    ESP_LOGI(TAG, "=================================================");
+
+    // 준비 완료 후 오리진 상태 검사 및 자동 복구 수행
+    check_boot_origin_recovery();
+}
+
 void proximity_task(void *arg)
 {
 	ESP_LOGI(TAG, "%s +", __func__);
@@ -289,7 +307,6 @@ void proximity_task(void *arg)
 			cat_enter_cnt = 0;
 			cat_use_cnt = 0;
 			mode = PROXI_MODE_IDLE;
-//			ESP_LOGI(TAG, "%s operating ... ", __func__);
 		}
 		else
 		{
@@ -334,18 +351,38 @@ void proximity_task(void *arg)
                             	if(cat_enter_cnt == 11)
                             	{
                                     ESP_LOGI(TAG, "cat moving 2");
-									prev_wg = (double)get_weight(LOADCELL_MAIN);
+                                    prev_wg = (double)get_weight(LOADCELL_MAIN);
                             	}
                             	else
-                            	{
-                            		cat_enter_cnt = 12;
-                                    gap = (double)get_weight(LOADCELL_MAIN);
-                                    if(gap - prev_wg < 3.0)
-                                    {
-                                        prev_wg = gap;
-//                                        ESP_LOGI(TAG, "cat prev wg %.1fg", prev_wg);
-                                    }
-                            	}
+								{
+									cat_enter_cnt = 12;
+									gap = (double)get_weight(LOADCELL_MAIN);
+
+									if (prev_wg < 100.0) {
+										prev_wg = gap;
+									}
+
+									if(fabs(gap - prev_wg) < 3.0)
+									{
+										prev_wg = gap;
+
+										if (!g_is_system_ready) {
+											send_led_cmd_msg(&lmsg, LED_IDLE_CMD);
+											g_is_system_ready = true;
+
+											ESP_LOGI(TAG, "=================================================");
+											ESP_LOGI(TAG, " [CAT FSM STATE CHANGED] -> State: 1 (CAT_STATE_IDLE)");
+											ESP_LOGI(TAG, " [SYSTEM READY] White LED On & 3 Buttons Enabled!");
+											ESP_LOGI(TAG, "=================================================");
+
+											print_boot_photo_sensor_status();
+										}
+									}
+									else
+									{
+										prev_wg = gap;
+									}
+								}
                             }
 						}
 	            	}
@@ -355,7 +392,6 @@ void proximity_task(void *arg)
 	            	{
 						cat_use_cnt++;
 						cat_enter_cnt = 0;
-//						ESP_LOGI(TAG, "PROXI_MODE_USE %d !!\n", cat_use_cnt);
 	            	}
 	            	else
 	            	{
@@ -370,12 +406,8 @@ void proximity_task(void *arg)
 	            	}
 	            	break;
 	            case PROXI_MODE_ESCAPE:
-//                    vTaskDelay(pdMS_TO_TICKS(5000));	// 5 sec, need to be stable time
 	            	ESP_LOGI(TAG, "stay during %.1f sec prev_wg %.1fg cur_wg %.1fg delta %.1fg !!"
 	            		, ((float)cat_use_cnt)/2.0f, prev_wg, get_weight(LOADCELL_MAIN), get_weight(LOADCELL_MAIN)-prev_wg);
-//					app->EFFECTIVE_DWELL_TIME = (uint32_t)(cat_use_cnt/2);
-//                    send_loadcell_msg(&lmsg, LOADCELL_INIT_CMD);
-//                    vTaskDelay(pdMS_TO_TICKS(500));
 	            	cat_enter_cnt = 0;
                     mode = PROXI_MODE_HARDEN;
 
@@ -387,14 +419,12 @@ void proximity_task(void *arg)
 	            	{
                       	ESP_LOGI(TAG, "%s wait hardening ...", __func__);
 	            	}
-//	            	if(cat_enter_cnt > (harden_tm*60*2))	// 10 minute
 					if(cat_enter_cnt > 20)    // 10 sec, test
 	            	{
                         cat_enter_cnt = 0;
                         cat_enter_f = false;
                         mode = PROXI_MODE_IDLE;
                         ESP_LOGI(TAG, "to PROXI_MODE_IDLE 10 minute harden finished !!");
-//                    	vTaskDelay(pdMS_TO_TICKS(500));	// 1 sec wait
 						xTaskCreate(ui_clean_task, "ui_clean_task", 4096, NULL, 10, NULL);
 	            	}
 	            	break;
@@ -409,8 +439,8 @@ void proximity_task(void *arg)
 void ui_init(void)
 {
 	ESP_LOGI(TAG, "%s", __func__);	
+	g_is_system_ready = false;
 	ui_cmd_msg = xQueueCreate(10, sizeof(message_t));
     xTaskCreate(ui_task, "ui_task", UI_TASK_STACK_SIZE, NULL, 10, NULL);
     xTaskCreate(proximity_task, "proximity_task", 3072, NULL, 10, NULL);
-
 }

@@ -236,7 +236,7 @@ static void finish_diag_mode(int mode)
 	diag_func = 0;
 }
 
-// Áø´Ü ¸ðµå¿¡¼­ ¼±ÅÃµÈ ÇÏµå¿þ¾î(mode)ÀÇ ´ÙÀ½ Å×½ºÆ® µ¿ÀÛÀ» ¼öÇàÇÏ´Â ÇÔ¼ö
+// ì§„ë‹¨ ëª¨ë“œì—ì„œ ì„ íƒëœ í•˜ë“œì›¨ì–´(mode)ì˜ ë‹¤ìŒ í…ŒìŠ¤íŠ¸ ë™ìž‘ì„ ìˆ˜í–‰í•˜ëŠ” í•¨ìˆ˜
 static void next_diag_func(int mode)
 {
 	int ret;
@@ -244,7 +244,7 @@ static void next_diag_func(int mode)
     
 	switch(mode)
 	{
-		/* ===== 1. ³»ºÎ ÇÃ·¹ÀÌÆ®(Plate) ±¸µ¿ Å×½ºÆ® ===== */
+		/* ===== 1. ë‚´ë¶€ í”Œë ˆì´íŠ¸(Plate) êµ¬ë™ í…ŒìŠ¤íŠ¸ ===== */
 		case DIAG_PLATE_MODE:	
 			if(diag_func >= 2)
 			{
@@ -260,7 +260,7 @@ static void next_diag_func(int mode)
 			}
 			break;
 
-		/* ===== 2. ½ºÄò ÀüÈÄÁø(Scoop In/Out) ±¸µ¿ Å×½ºÆ® ===== */
+		/* ===== 2. ìŠ¤ì¿± ì „í›„ì§„(Scoop In/Out) êµ¬ë™ í…ŒìŠ¤íŠ¸ ===== */
         case DIAG_SCPINOUT_MODE:
 			if(diag_func >= 2)
 			{
@@ -284,7 +284,7 @@ static void next_diag_func(int mode)
 			}
         	break;
 
-        /* ===== 3. ½ºÄò È¸Àü(Scoop Spin) ±¸µ¿ Å×½ºÆ® ===== */	
+        /* ===== 3. ìŠ¤ì¿± íšŒì „(Scoop Spin) êµ¬ë™ í…ŒìŠ¤íŠ¸ ===== */	
         case DIAG_SCPSPIN_MODE:
 	        if(diag_func >= 2)
 	        {
@@ -300,7 +300,7 @@ static void next_diag_func(int mode)
 			}
         	break;
 
-		/* ===== 4. Æó±â¹° Åë µ¤°³(Waste Cover) ±¸µ¿ Å×½ºÆ® ===== */        	
+		/* ===== 4. íê¸°ë¬¼ í†µ ë®ê°œ(Waste Cover) êµ¬ë™ í…ŒìŠ¤íŠ¸ ===== */        	
         case DIAG_WASTE_MODE:
 	        if(diag_func >= 2)
 	        {
@@ -330,9 +330,6 @@ static void next_diag_func(int mode)
 
 static void diag_check_pt(int mode)
 {
-	int ret;
-    mt_message_t msg = {0};
-    
 	switch(mode)
 	{
 		case DIAG_PLATE_MODE:	
@@ -376,7 +373,7 @@ static void diag_sensor_rf(int mode)
 	}
 }
 
-// do diagnostic mode Áø´Ü¸ðµå 
+// do diagnostic mode ì§„ë‹¨ëª¨ë“œ 
 static void do_diag_mode(int mode)
 {
 	ESP_LOGI(TAG, "%s mode %d +", __func__, mode);

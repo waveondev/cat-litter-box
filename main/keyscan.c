@@ -1,18 +1,19 @@
 #include "main.h"
 
 static const char *TAG = "KEYSCAN";
-// »ç¿ëÇÒ GPIO ÇÉ Á¤ÀÇ
+
+// ğŸŒŸ [ì¤‘ë³µ ì •ì˜ í•´ê²°]: ui.cì— ì‹¤ì²´ê°€ ìˆìœ¼ë¯€ë¡œ extern ì°¸ì¡° ì„ ì–¸ìœ¼ë¡œ ë³€ê²½
+extern volatile bool g_is_system_ready;
+
 #define KEY_CLEAN    14
-#define KEY_CHANGE    15
-#define KEY_SET    16
+#define KEY_CHANGE   15
+#define KEY_SET      16
 #define GPIO_BIT_MASK  ((1ULL << KEY_CLEAN) | (1ULL << KEY_CHANGE) | (1ULL << KEY_SET))
 
-// ½Ã°£ ÀÓ°è°ª Á¤ÀÇ (´ÜÀ§: ¹Ğ¸®ÃÊ)
 #define TIME_THRES_3S   3000
 #define TIME_THRES_5S   5000
 #define TIME_THRES_10S  10000
 
-// °¢ ÇÉÀÇ »óÅÂ¸¦ °ü¸®ÇÏ±â À§ÇÑ ±¸Á¶Ã¼
 typedef struct {
     gpio_num_t pin;
     bool is_pressed;
@@ -22,20 +23,18 @@ typedef struct {
     bool event_triggered_10s;
 } key_state_t;
 
-// GPIO ÃÊ±âÈ­ ÇÔ¼ö
 static void init_key_gpio(void)
 {
     gpio_config_t io_conf = {
         .pin_bit_mask = GPIO_BIT_MASK,
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,     // Low ActiveÀÌ¹Ç·Î ³»ºÎ Ç®¾÷ È°¼ºÈ­
+        .pull_up_en = GPIO_PULLUP_ENABLE,     
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE        // ÁÖ±âÀû Æú¸µ ¹æ½ÄÀ¸·Î Ã³¸® (¹Ù¿î½Ì Á¦¾î ¿ëÀÌ)
+        .intr_type = GPIO_INTR_DISABLE        
     };
     gpio_config(&io_conf);
 }
 
-// Å° ÀÔ·Â Ã³¸® ÅÂ½ºÅ©
 static void key_polling_task(void *arg)
 {
     message_t msg;
@@ -66,6 +65,12 @@ static void key_polling_task(void *arg)
                     keys[i].event_triggered_10s = false;
                     ESP_LOGD(TAG, "GPIO %d Pressed", keys[i].pin);
                 } else {
+                    // ğŸŒŸ [í‚¤ ì…ë ¥ ì°¨ë‹¨ ë³´í˜¸]: g_is_system_ready ê°€ false ì¼ ë•Œ ë¡±í‚¤ ë™ì‘ ë°©ì§€
+                    if (!g_is_system_ready) {
+                        ESP_LOGW(TAG, "[KEY BLOCKED] System not ready (Waiting for IDLE/White LED)...");
+                        continue;
+                    }
+
                     int64_t duration = current_time - keys[i].press_start_time;
                     if (duration >= TIME_THRES_10S && !keys[i].event_triggered_10s) {
                         keys[i].event_triggered_10s = true;
@@ -81,7 +86,7 @@ static void key_polling_task(void *arg)
                         {
                             msg.task_id = (uint32_t)arg;
                             send_ui_cmd_msg(&msg, UI_PAIRING_CMD);
-						}
+                        }
                     }
                     else if (duration >= TIME_THRES_3S && !keys[i].event_triggered_3s) {
                         keys[i].event_triggered_3s = true;
@@ -89,49 +94,60 @@ static void key_polling_task(void *arg)
                         {
                             msg.task_id = (uint32_t)arg;
                             send_ui_cmd_msg(&msg, UI_MANAGE_START_CMD);
-						}
+                        }
                     }
                 }
             } else {
                 if (keys[i].is_pressed) {
-					if(!keys[i].event_triggered_10s &&
-						!keys[i].event_triggered_5s &&
-						!keys[i].event_triggered_3s)
-					{
-						if(keys[i].pin == KEY_CLEAN && !keys[1].is_pressed && !keys[2].is_pressed)
-						{
+                    // ğŸŒŸ [í‚¤ ì…ë ¥ ì°¨ë‹¨ ë³´í˜¸]: g_is_system_ready ê°€ false ì¼ ë•Œ ìˆí‚¤ í´ë¦­ ë™ì‘ ë°©ì§€
+                    if (!g_is_system_ready) {
+                        ESP_LOGW(TAG, "[KEY BLOCKED] System not ready (Waiting for IDLE/White LED)...");
+                    }
+                    else if(!keys[i].event_triggered_10s &&
+                        !keys[i].event_triggered_5s &&
+                        !keys[i].event_triggered_3s)
+                    {
+                        if(keys[i].pin == KEY_CLEAN && !keys[1].is_pressed && !keys[2].is_pressed)
+                        {
                             msg.task_id = (uint32_t)arg;
                             if(get_status_diag())
                             {
-                           	 	send_diag_cmd_msg(&msg, DIAG_NEXT_STEP_CMD);
-							}
-							else
-							{
-                           	 	send_ui_cmd_msg(&msg, UI_CLEAN_CMD);
-							}
-						}
-						else if(keys[i].pin == KEY_CHANGE && !keys[0].is_pressed && !keys[2].is_pressed)
-						{
-                            msg.task_id = (uint32_t)arg;
-                            if(get_status_diag())
-                            {
-                           	 	send_diag_cmd_msg(&msg, DIAG_NEXT_FUNC_CMD);
-							}
-							else
-							{
-                            	send_ui_cmd_msg(&msg, UI_MANAGE_FINISH_CMD);
+                                send_diag_cmd_msg(&msg, DIAG_NEXT_STEP_CMD);
                             }
-						}
-						else if(keys[i].pin == KEY_SET && !keys[0].is_pressed && !keys[1].is_pressed)
-						{
+                            else
+                            {
+                                if(is_clean_running())
+                                {
+                                    toggle_clean_pause();
+                                }
+                                else
+                                {
+                                    send_ui_cmd_msg(&msg, UI_CLEAN_CMD);
+                                }
+                            }
+                        }
+                        else if(keys[i].pin == KEY_CHANGE && !keys[0].is_pressed && !keys[2].is_pressed)
+                        {
+                            msg.task_id = (uint32_t)arg;
+                            if(get_status_diag())
+                            {
+                                send_diag_cmd_msg(&msg, DIAG_NEXT_FUNC_CMD);
+                            }
+                            else
+                            {
+                                send_ui_cmd_msg(&msg, UI_MANAGE_FINISH_CMD);
+                            }
+                        }
+                        else if(keys[i].pin == KEY_SET && !keys[0].is_pressed && !keys[1].is_pressed)
+                        {
                             msg.task_id = (uint32_t)arg;
                             send_ui_cmd_msg(&msg, UI_TARE_ZERO_CMD);
-						}
-					}
+                        }
+                    }
                     keys[i].is_pressed = false;
-	                keys[i].event_triggered_3s = false;
-	                keys[i].event_triggered_5s = false;
-	                keys[i].event_triggered_10s = false;
+                    keys[i].event_triggered_3s = false;
+                    keys[i].event_triggered_5s = false;
+                    keys[i].event_triggered_10s = false;
                 }
             }
         }
@@ -140,16 +156,16 @@ static void key_polling_task(void *arg)
 
 void keyscan_init(void)
 {
-	ESP_LOGI(TAG, "%s", __func__);
+    ESP_LOGI(TAG, "%s", __func__);
     init_key_gpio();
     xTaskCreate(key_polling_task, "key_polling_task", 3072, NULL, 5, NULL);
 }
 
 bool get_keyclean_status(void)
 {
-	if(gpio_get_level(KEY_CLEAN) == 0)
-	{
-		return true;
-	}
-	return false;
+    if(gpio_get_level(KEY_CLEAN) == 0)
+    {
+        return true;
+    }
+    return false;
 }

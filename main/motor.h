@@ -5,6 +5,9 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+#include <stdbool.h>
+
 #define MOTOR_CMD_TRANSFER_DELAY	(50)
 
 typedef struct {
@@ -12,7 +15,7 @@ typedef struct {
     uint32_t cmd;
     uint32_t angle;
     uint32_t direction;
-    uint32_t speed;
+    uint32_t speed;     
     uint32_t timeout;
     bool cal;
 } mt_message_t;
@@ -59,7 +62,6 @@ typedef enum
     MT_RESUME    
 } MOTOR_OPERATION_T;
 
-
 typedef enum
 {
 	PT_START= 0,
@@ -76,9 +78,15 @@ int do_manage_start(void *arg);
 int do_manage_finish(void *arg);
 int motor_main_cover_test(int dir);
 int motor_waste_cover_test(int dir);
+int motor_scpspin_test(int dir); // ⭐ 터미널 'X' / 'x' 명령어 연동 SCP_SPIN 센서 테스트 프로토타입
 
 void send_motor_msg(void *message, uint32_t cmd, uint32_t angle, uint32_t dir, uint32_t timeout);
 void motor_init(void);
+
+void set_emergency_stop(void);
+void clear_emergency_stop(void);
+void toggle_clean_pause(void);
+bool is_clean_running(void);
 
 #ifdef __cplusplus
 }
